@@ -1,0 +1,11 @@
+FROM lynnard/haskell-android-builder
+
+COPY dependency.nix /dependency.nix
+
+# add dependency packages
+RUN /nix-build-ghc-android-runner --arg extraGhcPkgs 'import /dependency.nix'
+
+# use like this: docker run --rm -v `pwd`:/target image_tag [make_target]
+ENTRYPOINT ["/nix-build-ghc-android-runner", "--arg", "extraGhcPkgs", "import /dependency.nix", "--", "make", "-C", "/app", "-f", "android.mk"]
+
+COPY . /app
