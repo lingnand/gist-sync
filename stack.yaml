@@ -17,6 +17,10 @@ extra-deps:
 - http-api-data-0.3
 - base-compat-0.9.1
 - natural-transformation-0.4
+- turtle-1.4.4
+- managed-1.0.5
+- optparse-applicative-0.14.0.0
+- fail-4.9.0.0
 
 flags:
 

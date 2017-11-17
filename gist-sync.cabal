@@ -29,6 +29,14 @@ library
                      , lens
                      , bytestring
                      , servant-github
+                     , http-client
+                     , servant-client
+                     , mtl
+                     , regex-tdfa
+                     , turtle
+                     , foldl
+                     , managed
+                     , exceptions
   default-language:    Haskell2010
 
 executable gist-sync
