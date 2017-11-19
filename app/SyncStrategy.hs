@@ -187,7 +187,7 @@ byNameP = E.choice $ f <$> syncStrategyTable
 oneOfFilesP :: E.Parser SyncStrategy
 oneOfFilesP = oneOfFiles <$ E.string "oneOfFiles" <* E.skipMany1 E.space
           <*> (E.char '['
-                *> ((:) <$> file
+                *> ((:) <$> (E.spaces *> file)
                         <*  E.spaces
                         <*> many (E.char ',' *> E.spaces *> file <* E.spaces))
                 <*
