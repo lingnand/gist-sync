@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -8,7 +9,6 @@ module SyncStrategy
   , applyStrategy
 
   , (<||>)
-  , (<->>)
   , no
 
   , customRewrite
@@ -21,6 +21,7 @@ module SyncStrategy
   , updateLocal
   , updateRemote
   , updateAny
+  , ignoreConflicts
 
   , oneOfFiles
   , filenameMatches
@@ -28,20 +29,39 @@ module SyncStrategy
   , useRemoteForConflict
   , useLocalForConflict
   , useNewerForConflict
+
+  -- parsers
+  , strategyP
+  , parseStrategy
   ) where
 
 import           Control.Applicative
 import           Control.Monad
+import           Data.Either
 import           Data.Maybe
+import qualified Data.Text as T
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Network.GitHub.Gist.Sync as S
+import qualified Text.Parsec as E
+import qualified Text.Parsec.String as E
 import qualified Text.Regex.TDFA as R
 
 newtype SyncStrategy = SyncStrategy
-  { unSyncStrategy :: forall a. S.SyncAction a -> Maybe (S.SyncAction a) }
+  { unSyncStrategy :: forall a. S.SyncPlan a -> Maybe (S.SyncPlan a) }
+
+-- | A Monoid instance where strategies are chained together so the first
+--   continues on the result of the second
+--   this is similar to Endo
+instance Monoid SyncStrategy where
+  mempty = SyncStrategy pure
+  SyncStrategy s1 `mappend` SyncStrategy s2 = SyncStrategy $ s1 <=< s2
+
+-- | A more intuitive operator
+(<.>) :: SyncStrategy -> SyncStrategy -> SyncStrategy
+(<.>) = mappend
 
 -- | Apply a strategy on a set of actions to filter only valid ones
-applyStrategy :: SyncStrategy -> [S.SyncAction a] -> [S.SyncAction a]
+applyStrategy :: SyncStrategy -> [S.SyncPlan a] -> [S.SyncPlan a]
 applyStrategy = mapMaybe . unSyncStrategy
 
 ---- Combinators on the strategy
@@ -51,39 +71,33 @@ infixl 2 <||>
 (<||>) :: SyncStrategy -> SyncStrategy -> SyncStrategy
 SyncStrategy x <||> SyncStrategy y = SyncStrategy $ (<|>) <$> x <*> y
 
--- | Chain two strategies together so the second continues on the result of the
---   first
-infixl 3 <->>
-(<->>) :: SyncStrategy -> SyncStrategy -> SyncStrategy
-SyncStrategy x <->> SyncStrategy y = SyncStrategy $ x >=> y
-
 no :: SyncStrategy -> SyncStrategy
 no (SyncStrategy x) = SyncStrategy $ \a -> case x a of
   Nothing -> Just a
   Just _ -> Nothing
 
-customRewrite :: (forall a. S.SyncAction a -> Maybe (S.SyncAction a)) -> SyncStrategy
+customRewrite :: (forall a. S.SyncPlan a -> Maybe (S.SyncPlan a)) -> SyncStrategy
 customRewrite = SyncStrategy
 
-customFilter :: (forall a. S.SyncAction a -> Bool) -> SyncStrategy
+customFilter :: (forall a. S.SyncPlan a -> Bool) -> SyncStrategy
 customFilter f = SyncStrategy $ \x -> guard (f x) >> pure x
 
 ---- Filters
 anyFromRemote :: SyncStrategy
 anyFromRemote = customFilter f
-  where f S.UpdateLocal{} = True
-        f S.CreateLocal{} = True
-        f S.SyncConflict{} = True
+  where f (Right S.UpdateLocal{}) = True
+        f (Right S.CreateLocal{}) = True
+        f (Left S.SyncConflict{}) = True
         f _ = False
 
 createLocal :: SyncStrategy
 createLocal = customFilter f
-  where f S.CreateLocal{} = True
+  where f (Right S.CreateLocal{}) = True
         f _ = False
 
 createRemote :: SyncStrategy
 createRemote = customFilter f
-  where f S.CreateRemote{} = True
+  where f (Right S.CreateRemote{}) = True
         f _ = False
 
 createAny :: SyncStrategy
@@ -91,48 +105,118 @@ createAny = createLocal <||> createRemote
 
 updateLocal :: SyncStrategy
 updateLocal = customFilter f
-  where f S.UpdateLocal{} = True
+  where f (Right S.UpdateLocal{}) = True
         f _ = False
 
 updateRemote :: SyncStrategy
 updateRemote = customFilter f
-  where f S.UpdateRemote{} = True
+  where f (Right S.UpdateRemote{}) = True
         f _ = False
 
 updateAny :: SyncStrategy
 updateAny = updateLocal <||> updateRemote
 
+ignoreConflicts :: SyncStrategy
+ignoreConflicts = SyncStrategy $ mfilter isRight . pure
+
 oneOfFiles
   :: [P.FilePath]
   -> SyncStrategy
 oneOfFiles files = customFilter f
-  where f act = S.localFilePath act `elem` files
+  where f p = S.planFilePath p `elem` files
 
 filenameMatches :: R.Regex -> SyncStrategy
 filenameMatches regex = customFilter $ \x ->
-  R.match regex (P.encodeString . P.filename $ S.localFilePath x)
+  R.match regex (P.encodeString . P.filename $ S.planFilePath x)
 
 ---- Conflict resolvers
 useRemoteForConflict :: SyncStrategy
 useRemoteForConflict = SyncStrategy mapper
-  where mapper S.SyncConflict{ S.localFilePath, S.remoteFileURL }
-          = Just S.UpdateLocal{..}
+  where mapper (Left S.SyncConflict{..})
+          = Just $ Right S.UpdateLocal
+            { localFilePath = conflictLocalFilePath
+            , remoteFileURL = conflictRemoteFileURL
+            , remoteGistFileId = conflictRemoteGistFileId
+            }
         mapper x
           = Just x
 
 useLocalForConflict :: SyncStrategy
 useLocalForConflict = SyncStrategy mapper
-  where mapper S.SyncConflict{ S.localFilePath, S.remoteGistFileId, S.localFileInfo }
-          = Just S.UpdateRemote{..}
+  where mapper (Left S.SyncConflict{..})
+          = Just $ Right S.UpdateRemote
+            { localFilePath = conflictLocalFilePath
+            , localFileInfo = conflictLocalFileInfo
+            , remoteGistFileId = conflictRemoteGistFileId
+            }
         mapper x
           = Just x
 
 useNewerForConflict :: SyncStrategy
 useNewerForConflict = SyncStrategy mapper
-  where mapper x@S.SyncConflict { S.remoteUpdateTime , S.localFileInfo }
-          | S.localFileLastModified localFileInfo > remoteUpdateTime
+  where mapper x@(Left S.SyncConflict{..})
+          | S.localFileLastModified conflictLocalFileInfo > conflictRemoteUpdateTime
           = unSyncStrategy useLocalForConflict x
           | otherwise
           = unSyncStrategy useRemoteForConflict x
         mapper x
           = Just x
+
+
+-- parser for SyncStrategy
+syncStrategyTable :: [(String, SyncStrategy)]
+syncStrategyTable =
+  [ ("anyFromRemote", anyFromRemote)
+  , ("createLocal", createLocal)
+  , ("createRemote", createRemote)
+  , ("createAny", createAny)
+  , ("updateLocal", updateLocal)
+  , ("updateRemote", updateRemote)
+  , ("updateAny", updateAny)
+  , ("ignoreConflicts", ignoreConflicts)
+  , ("useRemoteForConflict", useRemoteForConflict)
+  , ("useLocalForConflict", useLocalForConflict)
+  , ("useNewerForConflict", useNewerForConflict)
+  ]
+
+byNameP :: E.Parser SyncStrategy
+byNameP = E.choice $ f <$> syncStrategyTable
+  where f (name, val) = val <$ (E.try $ E.string name)
+
+-- XXX: very crude hand parsing of list
+oneOfFilesP :: E.Parser SyncStrategy
+oneOfFilesP = oneOfFiles <$ E.string "oneOfFiles" <* E.skipMany1 E.space
+          <*> (E.char '['
+                *> ((:) <$> file
+                        <*  E.spaces
+                        <*> many (E.char ',' *> E.spaces *> file <* E.spaces))
+                <*
+                E.char ']')
+  where file = P.fromText . T.pack <$> E.many (E.noneOf " ,]")
+
+
+filenameMatchesP :: E.Parser SyncStrategy
+filenameMatchesP = filenameMatches <$ E.string "filenameMatches" <* E.skipMany1 E.space
+                   <*> (E.char '/'
+                        *> (R.makeRegex <$> E.many1 (E.noneOf "/")) <*
+                        E.char '/')
+
+aStrategyP :: E.Parser SyncStrategy
+aStrategyP = byNameP <|> oneOfFilesP <|> filenameMatchesP
+
+binaryOpP :: E.Parser (SyncStrategy -> SyncStrategy -> SyncStrategy)
+binaryOpP = (<.>) <$ E.string "."
+            <|> (<||>) <$ E.string "||"
+
+unaryOpP :: E.Parser (SyncStrategy -> SyncStrategy)
+unaryOpP = no <$ E.string "!"
+
+strategyP :: E.Parser SyncStrategy
+strategyP =
+       unaryOpP <* E.spaces <*> strategyP
+   <|> E.char '(' *> E.spaces *> strategyP <* E.spaces <* E.char ')'
+   <|> E.try (flip ($) <$> aStrategyP <* E.spaces <*> binaryOpP <* E.spaces <*> strategyP)
+   <|> aStrategyP
+
+parseStrategy :: String -> Either E.ParseError SyncStrategy
+parseStrategy = E.runParser strategyP () "textual"
