@@ -21,6 +21,12 @@ extra-deps:
 - managed-1.0.5
 - optparse-applicative-0.14.0.0
 - fail-4.9.0.0
+- brick-0.27
+- data-clist-0.1.2.0
+- text-zipper-0.10.1
+- vty-5.18.1
+- word-wrap-0.4.1
+- microlens-0.3.5.1
 
 flags:
 
