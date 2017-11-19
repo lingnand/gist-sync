@@ -44,7 +44,7 @@ data SyncFile a = SyncFile
 data LocalFileInfo a = LocalFileInfo
   { localFileHash         :: H.Digest a -- ^ Hash of the file as of a moment in time
   , localFileLastModified :: UTCTime    -- ^ Last modified time of the file
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Ord)
 
 type SyncPlan a = Either (SyncConflict a) (SyncAction a)
 
@@ -67,7 +67,7 @@ data SyncAction a = UpdateLocal  { localFilePath    :: P.FilePath
                                  , localFileInfo    :: LocalFileInfo a
                                  , remoteFileId     :: Gist.FileId
                                  }
-                  deriving (Show, Eq)
+                  deriving (Show, Eq, Ord)
 
 data SyncConflict a = SyncConflict
   { conflictLocalFilePath    :: P.FilePath

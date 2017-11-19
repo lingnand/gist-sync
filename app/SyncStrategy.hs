@@ -7,6 +7,7 @@ module SyncStrategy
   (
     SyncStrategy
   , applyStrategy
+  , applyStrategyToList
 
   , (<||>)
   , no
@@ -60,9 +61,13 @@ instance Monoid SyncStrategy where
 (<.>) :: SyncStrategy -> SyncStrategy -> SyncStrategy
 (<.>) = mappend
 
+-- | Apply a strategy on a single plan
+applyStrategy :: SyncStrategy -> S.SyncPlan a -> Maybe (S.SyncPlan a)
+applyStrategy = unSyncStrategy
+
 -- | Apply a strategy on a set of actions to filter only valid ones
-applyStrategy :: SyncStrategy -> [S.SyncPlan a] -> [S.SyncPlan a]
-applyStrategy = mapMaybe . unSyncStrategy
+applyStrategyToList :: SyncStrategy -> [S.SyncPlan a] -> [S.SyncPlan a]
+applyStrategyToList = mapMaybe . unSyncStrategy
 
 ---- Combinators on the strategy
 -- | Combine two strategies such that for each incoming action, if first
@@ -181,7 +186,7 @@ syncStrategyTable =
 
 byNameP :: E.Parser SyncStrategy
 byNameP = E.choice $ f <$> syncStrategyTable
-  where f (name, val) = val <$ (E.try $ E.string name)
+  where f (name, val) = val <$ E.try (E.string name)
 
 -- XXX: very crude hand parsing of list
 oneOfFilesP :: E.Parser SyncStrategy
