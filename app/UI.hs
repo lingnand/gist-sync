@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -30,6 +29,7 @@ import qualified Data.Serialize as Ser
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
 import qualified Data.Yaml as Y
+import qualified Debug.Trace as Trace
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Graphics.Vty as V
 import qualified Network.GitHub.Gist.Sync as S
@@ -209,7 +209,7 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
     conflictsMay = uncons $ lefts plans'
 
 applyMsg :: LogMsg -> AppState -> AppState
-applyMsg msg st = st
+applyMsg msg st = Trace.traceShow msg st
   { appLogs = appLogs st Seq.|> msg
   , appWorkingArea = DisplayMsg msg
   }
@@ -238,7 +238,17 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue}
 
 -- this typically involves looking at the working area and do things as needed
 handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
-handleVtyEvent = _
+-- global events are handled first
+handleVtyEvent st (V.EvKey (V.KChar 'q') []) = Bk.halt st
+handleVtyEvent st@AppState{appWorkingArea} evt
+  | SyncPlansResolveConflict{ userChoice } <- appWorkingArea = do
+      areaMay <- sequence (runChoice userChoice evt)
+      Bk.continue $ maybe st (\a -> st{ appWorkingArea = a }) areaMay
+  | not (areaLockedToCurrentWork appWorkingArea) = case evt of
+      -- dismiss working area
+      V.EvKey V.KEnter [] -> Bk.continue st{ appWorkingArea = NoWork }
+      _ -> Bk.continue st
+  | otherwise = Bk.continue st
 
 handleEvent :: AppState -> Bk.BrickEvent Name AppMsg -> Bk.EventM Name (Bk.Next AppState)
 handleEvent st (Bk.AppEvent msg)
