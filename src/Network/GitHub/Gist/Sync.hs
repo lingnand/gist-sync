@@ -6,8 +6,11 @@ module Network.GitHub.Gist.Sync
   ( SyncFile(..)
   , LocalFileInfo(..)
   , SyncAction(..)
+  , SyncPlan
+  , SyncConflict(..)
   , PathMapper
   , GistFileId
+  , planFilePath
   , pathMapper
   , localToGistFile
   , gistToLocalFile
@@ -21,7 +24,6 @@ import qualified Crypto.Hash as H
 import qualified Data.HashMap.Strict as HMap
 import           Data.Maybe
 import           Data.String
--- import qualified Data.ByteString as B
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import           Data.Time.Clock
@@ -44,6 +46,11 @@ data LocalFileInfo a = LocalFileInfo
   , localFileLastModified :: UTCTime    -- ^ Last modified time of the file
   } deriving (Show, Eq)
 
+type SyncPlan a = Either (SyncConflict a) (SyncAction a)
+
+planFilePath :: SyncPlan a -> P.FilePath
+planFilePath = either conflictLocalFilePath localFilePath
+
 data SyncAction a = UpdateLocal  { localFilePath    :: P.FilePath
                                  , remoteGistFileId :: GistFileId
                                  , remoteFileURL    :: T.Text
@@ -60,13 +67,15 @@ data SyncAction a = UpdateLocal  { localFilePath    :: P.FilePath
                                  , localFileInfo    :: LocalFileInfo a
                                  , remoteFileId     :: Gist.FileId
                                  }
-                  | SyncConflict { localFilePath    :: P.FilePath
-                                 , localFileInfo    :: LocalFileInfo a
-                                 , remoteGistFileId :: GistFileId
-                                 , remoteFileURL    :: T.Text
-                                 , remoteUpdateTime :: UTCTime
-                                 }
                   deriving (Show, Eq)
+
+data SyncConflict a = SyncConflict
+  { conflictLocalFilePath    :: P.FilePath
+  , conflictLocalFileInfo    :: LocalFileInfo a
+  , conflictRemoteGistFileId :: GistFileId
+  , conflictRemoteFileURL    :: T.Text
+  , conflictRemoteUpdateTime :: UTCTime
+  } deriving (Show, Eq)
 
 -- | A isomorphism between local file path and gist file id
 newtype PathMapper = PathMapper { unPathMapper :: Iso' P.FilePath Gist.FileId }
@@ -94,7 +103,7 @@ computeSyncActions
                     -- ^ A list of files, either synced in the past,
                     --   or potentially need to be synced fresh, all with current info
   -> [Gist.Gist]    -- ^ All gists from the remote end
-  -> [Either e (SyncAction a)] -- ^ A list of actions with their resultant sync files
+  -> [Either e (SyncPlan a)] -- ^ A list of actions with their resultant sync files
 computeSyncActions pMapper files gists = mapMaybe (uncurry onPair) (Map.toList pairs)
   where
     altLocal Nothing x = x
@@ -118,17 +127,17 @@ computeSyncActions pMapper files gists = mapMaybe (uncurry onPair) (Map.toList p
       :: ( P.FilePath, Gist.FileId )
       -> ( Maybe (Either P.FilePath (SyncFile a), LocalFileInfo a)
          , Maybe (Gist.File, Gist.Gist) )
-      -> Maybe (Either e (SyncAction a))
+      -> Maybe (Either e (SyncPlan a))
     onPair (p,fid) (Nothing, Just (gfile, gist))
     -- never synced to local in the past
-      = Just $ Right CreateLocal
+      = Just . Right . Right $ CreateLocal
       { localFilePath = p
       , remoteFileURL = Gist.fileRawUrl gfile
       , remoteGistFileId = (Gist.id gist, fid)
       }
     onPair (p,fid) (Just (Left _, local), Nothing)
     -- never synced to remote in the past
-      = Just $ Right CreateRemote
+      = Just . Right . Right $ CreateRemote
       { localFilePath = p
       , localFileInfo = local
       , remoteFileId = fid
@@ -138,12 +147,12 @@ computeSyncActions pMapper files gists = mapMaybe (uncurry onPair) (Map.toList p
       = Just . Left . fromString $
         "Synced in the past, but no gist found; sync file = " ++ show sync
     onPair (p,fid) (Just (Right sync, local), Just (gfile, gist))
-      | remoteChanged, not localChanged = Just $ Right UpdateLocal
+      | remoteChanged, not localChanged = Just . Right . Right $ UpdateLocal
         { localFilePath = p
         , remoteGistFileId = gistFileId
         , remoteFileURL = Gist.fileRawUrl gfile
         }
-      | not remoteChanged, localChanged = Just $ Right UpdateRemote
+      | not remoteChanged, localChanged = Just . Right . Right $ UpdateRemote
         { localFilePath = p
         , localFileInfo = local
         , remoteGistFileId = gistFileId
@@ -155,11 +164,11 @@ computeSyncActions pMapper files gists = mapMaybe (uncurry onPair) (Map.toList p
     onPair (p,fid) (Just (_, local), Just (gfile, gist))
       -- both have changed, OR
       -- never synced, but there is a remote correspondence
-      = Just $ Right SyncConflict
-      { localFilePath = p
-      , localFileInfo = local
-      , remoteGistFileId = (Gist.id gist, fid)
-      , remoteFileURL = Gist.fileRawUrl gfile
-      , remoteUpdateTime = Gist.updated_at gist
+      = Just . Right . Left $ SyncConflict
+      { conflictLocalFilePath = p
+      , conflictLocalFileInfo = local
+      , conflictRemoteGistFileId = (Gist.id gist, fid)
+      , conflictRemoteFileURL = Gist.fileRawUrl gfile
+      , conflictRemoteUpdateTime = Gist.updated_at gist
       }
     onPair _ _ = Nothing

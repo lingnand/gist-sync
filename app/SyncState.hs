@@ -1,18 +1,32 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 module SyncState
   (
+    SyncAction'
+  , SyncConflict'
+  , SyncPlan'
+  , SyncFile'
+  , SyncError(..)
+  , SyncM
+  , runSyncM
+  , SyncEnv(..)
+  , SyncState(..)
+  , liftGitHub
+
+  , genSyncPlans
+  , performSyncActions
   ) where
 
 import           Control.Concurrent.Chan
 import           Control.Exception
 import qualified Control.Foldl as Fold
+import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
@@ -23,19 +37,24 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
 import           Data.Monoid
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import           Data.Time.Clock (UTCTime)
 import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Network.GitHub as G
 import qualified Network.GitHub.Gist.Sync as S
+import qualified Network.GitHub.Types.Gist.Edit as GE
 import qualified Network.HTTP.Client as HTTP
 import           Servant.Client (ServantError, BaseUrl, runClientM, ClientEnv(..))
 import qualified Turtle as Ttl
 
--- import qualified SyncStrategy as SS
+-- specialized version of SyncAction and SyncFile
+type SyncAction' = S.SyncAction H.MD5
+type SyncConflict'   = S.SyncConflict H.MD5
+type SyncPlan'   = S.SyncPlan H.MD5
+type SyncFile'   = S.SyncFile H.MD5
 
 data SyncError = SyncLogicError T.Text
-               | forall a. SyncCannotPerformAction (S.SyncAction a)
                | ServantError ServantError
                | OtherException SomeException
 
@@ -74,8 +93,12 @@ data SyncEnv = SyncEnv
   }
 
 data SyncState = SyncState
-  { syncFiles :: M.Map P.FilePath (S.SyncFile H.MD5)
+  { syncFiles :: M.Map P.FilePath SyncFile'
   } deriving (Show, Eq)
+
+instance Monoid SyncState where
+  mempty = SyncState M.empty
+  s1 `mappend` s2 = SyncState $ syncFiles s1 `mappend` syncFiles s2
 
 instance MonadState SyncState SyncM where
   get = SyncM get
@@ -89,10 +112,10 @@ liftGitHub :: G.GitHub a -> SyncM a
 liftGitHub = SyncM . lift . lift . lift
 
 -- | Perform a sync step and spit out a list of actions User should apply
---   discretion and filter/transform the actions as needed before actually
+--   discretion and filter/transform the plans as needed before actually
 --   applying them
-genSyncActions :: SyncM [S.SyncAction H.MD5]
-genSyncActions = do
+genSyncPlans :: SyncM [SyncPlan']
+genSyncPlans = do
   env <- ask
   -- get all the files under the syncDir
   fs <- flip Ttl.fold Fold.list $ do
@@ -115,14 +138,9 @@ genSyncActions = do
   let actionEths = S.computeSyncActions (syncPathMapper env) fsWithInfos gists
   forM actionEths $ either (throwError . SyncLogicError) pure
 
--- | Apply the sync strategy saved in the environment
---   NOTE: the result could well still contain SyncConflict, the user should
---   figure out a way to rewrite them into actionable items before calling
---   'performSyncAction'
-
 -- | Actually perform the actions, updating the internal sync state
 --   as a result
-performSyncActions :: UTCTime -> [S.SyncAction H.MD5] -> SyncM ()
+performSyncActions :: UTCTime -> [SyncAction'] -> SyncM ()
 performSyncActions time acts = do
   newSFiles <- mapM handle acts
   modify $ \st -> st{ syncFiles = foldr (\f -> M.insert (S.syncFilePath f) f) (syncFiles st) newSFiles  }
@@ -132,13 +150,11 @@ performSyncActions time acts = do
     handle x@S.CreateLocal{} =
       write (S.localFilePath x) (S.remoteFileURL x) (S.remoteGistFileId x)
     handle x@S.UpdateRemote{} =
-      error "FIXME: not implemented"
+      upload (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
     handle x@S.CreateRemote{} =
-      error "FIXME: not implemented"
-    handle x@S.SyncConflict{} =
-      throwError $ SyncCannotPerformAction x
-    write :: P.FilePath -> T.Text -> S.GistFileId -> SyncM (S.SyncFile H.MD5)
-    write f url gid = do
+      upload (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
+    write :: P.FilePath -> T.Text -> S.GistFileId -> SyncM SyncFile'
+    write f url gfid = do
       mgr <- asks manager
       -- XXX: more efficient to set up a pipe to dump to file directly
       liftIO $ do
@@ -147,7 +163,18 @@ performSyncActions time acts = do
         BL.writeFile (P.encodeString f) content
         return S.SyncFile
           { S.syncFilePath = f
-          , S.syncGistFileId = gid
+          , S.syncGistFileId = gfid
           , S.syncFileHash = H.hash (BL.toStrict content)
           , S.syncFileTime = time
           }
+    upload :: P.FilePath -> S.LocalFileInfo H.MD5 -> S.GistFileId -> SyncM SyncFile'
+    upload f S.LocalFileInfo{S.localFileHash} gfid@(gid,fid) = do
+      -- XXX: avoid reading file repeatedly?
+      newContent <- liftIO . T.readFile $ P.encodeString f
+      _ <- liftGitHub $ G.editGist gid (GE.editFile fid mempty{ GE.content = Just newContent })
+      return S.SyncFile
+        { S.syncFilePath = f
+        , S.syncGistFileId = gfid
+        , S.syncFileHash = localFileHash
+        , S.syncFileTime = time
+        }
