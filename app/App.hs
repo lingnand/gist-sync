@@ -4,7 +4,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 -- | Module used for parsing options
-module UI
+module App
   ( app
 
   , appConfigFromYaml
@@ -38,7 +38,8 @@ import qualified Network.HTTP.Client.TLS as HTTP
 import qualified SyncState as SS
 import           System.IO
 
-import           UI.Types
+import           App.Types
+import           App.UI (drawUI, attrMap)
 import qualified SyncStrategy as SStrat
 
 app :: Bk.App AppState AppMsg Name
@@ -47,7 +48,7 @@ app = Bk.App
   , appChooseCursor = Bk.neverShowCursor
   , appHandleEvent = handleEvent
   , appStartEvent = return
-  , appAttrMap = _
+  , appAttrMap = attrMap
   }
 
 runStateBackupWorker
@@ -258,6 +259,3 @@ handleEvent st (Bk.VtyEvent evt)
 handleEvent st _
   -- ignore mouse events
   = Bk.continue st
-
-drawUI :: AppState -> [Bk.Widget Name]
-drawUI st = _

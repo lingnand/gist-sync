@@ -32,8 +32,12 @@ library
 
 executable gist-sync
   -- exposed-modules:     
-  -- other-modules:       
-  -- other-extensions:    
+  other-modules:       App.Types
+                     , App.UI
+                     , App
+                     , SyncState
+                     , SyncStrategy
+  -- other-extensions:
   hs-source-dirs:      app
   main-is:             Main.hs
   build-depends:       base >=4.8 && <5
@@ -60,10 +64,6 @@ executable gist-sync
                      , vty
                      , cereal
                      , memory
-  other-modules:       UI.Types
-                     , UI
-                     , SyncState
-                     , SyncStrategy
   default-language:    Haskell2010
 
   ghc-options:         -Wall -threaded -stubdir cbits -fdefer-typed-holes
