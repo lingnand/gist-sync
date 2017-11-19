@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 module App.Types
@@ -9,26 +8,22 @@ module App.Types
   , Name
   , RunMode(..)
   , AppConfig(..)
-  , Choice(..)
-  , UserChoice
   , AppWorkingArea(..)
   , AppMsg(..)
 
   , areaLockedToCurrentWork
   ) where
 
-import qualified Brick as Bk
+import qualified Brick.Widgets.Dialog as Bk
 import           Control.Applicative
 import           Control.Concurrent
 import           Data.Aeson
-import           Data.Monoid
 import qualified Data.Sequence as Seq
 import           Data.String
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
 import qualified Filesystem.Path.CurrentOS as P
 import           GHC.Generics
-import qualified Graphics.Vty as V
 import qualified Network.GitHub as G
 import qualified Servant.Client as Servant
 
@@ -92,23 +87,6 @@ instance FromJSON AppConfig where
           parseStrat = either (fail . show) return . SStrat.parseStrategy
   parseJSON _ = empty
 
--- | An arrow type that keeps a tag about itself
-data Choice m a b = Choice
-  { choiceTag :: m
-  , runChoice :: a -> Maybe b
-  } deriving (Functor)
-
--- user choice from a list of text choices
-type UserChoice = Choice [T.Text]
-
-instance Monoid m => Applicative (Choice m a) where
-  pure = Choice mempty . pure . pure
-  Choice t1 h1 <*> Choice t2 h2 = Choice (t1 <> t2) ((<*>) <$> h1 <*> h2)
-
-instance Monoid m => Alternative (Choice m a) where
-  empty = Choice mempty (pure empty)
-  Choice t1 h1 <|> Choice t2 h2 = Choice (t1 <> t2) ((<|>) <$> h1 <*> h2)
-
 data AppWorkingArea = SyncPlansResolveConflict
                       { originalPlans    :: [SS.SyncPlan']
                       , pendingActions   :: [SS.SyncAction']
@@ -116,8 +94,7 @@ data AppWorkingArea = SyncPlansResolveConflict
 
                       , currentConflict  :: SS.SyncConflict'
                       -- ^ the current conflict to resolve with user
-                      , userChoice       :: UserChoice V.Event
-                                            (Bk.EventM Name AppWorkingArea)
+                      , strategyChoice   :: Bk.Dialog SStrat.SyncStrategy
                       -- ^ user options to resolve the conflict
                       , replyMVar        :: MVar [SS.SyncAction']
                       }
