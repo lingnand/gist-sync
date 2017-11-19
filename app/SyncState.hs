@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 module SyncState
   (
@@ -32,15 +34,19 @@ import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Crypto.Hash as H
 import           Data.Bifunctor (bimap)
+import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
 import           Data.Monoid
+import qualified Data.Serialize as Ser
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import           Data.Time.Clock (UTCTime)
-import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import           Data.Time.Clock (UTCTime, NominalDiffTime)
+import           Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import qualified Filesystem.Path.CurrentOS as P
+import           GHC.Generics
 import qualified Network.GitHub as G
 import qualified Network.GitHub.Gist.Sync as S
 import qualified Network.GitHub.Types.Gist.Edit as GE
@@ -92,9 +98,33 @@ data SyncEnv = SyncEnv
   , syncPathMapper :: S.PathMapper
   }
 
+instance Ser.Serialize T.Text where
+  put = Ser.put . T.encodeUtf8
+  get = Ser.get >>= either (fail . show) return . T.decodeUtf8'
+
+instance Ser.Serialize UTCTime where
+  put = Ser.put . (realToFrac :: NominalDiffTime -> Double) . utcTimeToPOSIXSeconds
+  get = posixSecondsToUTCTime . (realToFrac :: Double -> NominalDiffTime) <$> Ser.get
+
+instance Ser.Serialize P.FilePath where
+  put = Ser.put . either id id . P.toText
+  get = P.fromText <$> Ser.get
+
+instance H.HashAlgorithm a => Ser.Serialize (H.Digest a) where
+  put = Ser.put . BA.unpack
+  get = do
+    bs :: B.ByteString <- Ser.get
+    maybe (fail "Unable to unserialize hash digest") return $
+      H.digestFromByteString bs
+
+deriving instance Generic (S.SyncFile a)
+instance H.HashAlgorithm a => Ser.Serialize (S.SyncFile a)
+
 data SyncState = SyncState
   { syncFiles :: M.Map P.FilePath SyncFile'
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Generic)
+
+instance Ser.Serialize SyncState
 
 instance Monoid SyncState where
   mempty = SyncState M.empty

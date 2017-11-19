@@ -57,9 +57,16 @@ executable gist-sync
                      , bytestring
                      , time
                      , parsec
+                     , vty
+                     , cereal
+                     , memory
+  other-modules:       UI.Types
+                     , UI
+                     , SyncState
+                     , SyncStrategy
   default-language:    Haskell2010
 
-  ghc-options:         -Wall -threaded -stubdir cbits
+  ghc-options:         -Wall -threaded -stubdir cbits -fdefer-typed-holes
   if flag(target-android)
     -- ### additional android options
     -- ### stubdir controls where the stub file is put

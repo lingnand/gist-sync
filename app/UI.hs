@@ -1,89 +1,44 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 -- | Module used for parsing options
 module UI
-  (
+  ( app
+
+  , appConfigFromYaml
+  , bootstrapAppState
   ) where
 
-import           Control.Exception
-import           Control.Monad.Except
 import qualified Brick as Bk
 import qualified Brick.BChan as Bk
-import qualified Brick.Main as Bk
-import           Control.Applicative
 import           Control.Concurrent
+import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Trans
-import           Data.Aeson
-import           Data.Maybe
-import           Data.String
+import           Control.Monad.Except
+import qualified Data.ByteString as B
+import qualified Data.Sequence as Seq
+import qualified Data.Serialize as Ser
 import qualified Data.Time.Clock as Time
 import qualified Data.Yaml as Y
 import qualified Filesystem.Path.CurrentOS as P
-import qualified Network.GitHub as G
+import qualified Graphics.Vty as V
 import qualified Network.GitHub.Gist.Sync as S
 import qualified Network.HTTP.Client as HTTP
 import qualified Network.HTTP.Client.TLS as HTTP
-import qualified Servant.Client as Servant
 import qualified SyncState as SS
-import qualified SyncStrategy as SStrat
+import           System.IO
 
-type Name = ()
+import           UI.Types
 
-data AppConfig = AppConfig
-  { syncStateStorage :: P.FilePath
-  -- ^ path to a file that is used to read/write sync state
-  -- copied from SyncEnv
-  , githubHost     :: Servant.BaseUrl
-  , githubToken    :: G.AuthToken
-  , syncDir        :: P.FilePath
-  , syncInterval   :: Time.NominalDiffTime
-  , syncStrategy   :: SStrat.SyncStrategy
-  -- ^ strategy to apply after each sync
+app :: Bk.App AppState AppMsg Name
+app = Bk.App
+  { Bk.appDraw = drawUI
+  , appChooseCursor = Bk.neverShowCursor
+  , appHandleEvent = handleEvent
+  , appStartEvent = return
+  , appAttrMap = _
   }
-
-instance FromJSON AppConfig where
-  parseJSON (Object v)  = AppConfig
-    <$> (P.fromText <$> v .: "sync-state-storage")
-    <*> ((v .: "github-host" >>= parseURL) <|> return defGithubHost)
-    <*> (fromString <$> v .: "github-token")
-    <*> (P.fromText <$> v .: "sync-dir")
-    <*> (parseInterval <$> v .: "sync-interval")
-    <*> ((v .: "sync-strategy" >>= parseStrat) <|> return mempty)
-    where defGithubHost = Servant.BaseUrl Servant.Https "api.github.com" 443 ""
-          parseURL t = either (fail . show) return $ Servant.parseBaseUrl t
-          parseInterval :: Double -> Time.NominalDiffTime
-          parseInterval = realToFrac
-          parseStrat = either (fail . show) return . SStrat.parseStrategy
-
--- | the UI state
-data AppState = AppState
-  {
-    appConfig :: AppConfig
-  -- ^ needed for rendering, but should never change during app run
-  -- , undefined
-  -- model side
-  }
-
--- data App = App AppState
---   { field :: Type
---   , field :: Type
---   } deriving (Show, Eq)
-
-data AppMsg = SyncPlansPending
-              { pendingPlans :: [SS.SyncPlan']
-              , respMVar       :: MVar [SS.SyncAction']
-              -- ^ where transformed actions are written to
-              }
-            | SyncStatePersisted
-              { newSyncState :: SS.SyncState
-              }
-            | SyncWorkerError
-              { syncWorkerError :: SS.SyncError
-              }
-            | SyncWorkerDied
-              { syncWorkerError :: SS.SyncError
-              }
 
 runStateBackupWorker
   :: P.FilePath
@@ -92,10 +47,9 @@ runStateBackupWorker
   -> IO ()
 runStateBackupWorker outputPath stateUpdChan msgChan = forever $ do
   st <- readChan stateUpdChan
-  serializeState st outputPath
+
+  B.writeFile (P.encodeString outputPath) (Ser.encode st)
   Bk.writeBChan msgChan $ SyncStatePersisted st
-  where
-    serializeState = undefined
 
 runSyncWorker
   :: Time.NominalDiffTime
@@ -129,14 +83,13 @@ appConfigFromYaml :: P.FilePath -> IO (Maybe AppConfig)
 appConfigFromYaml = Y.decodeFile . P.encodeString
 
 -- | start the workers and return the initial app state
-bootstrapApp :: AppConfig -> IO AppState
-bootstrapApp AppConfig{..} = do
+bootstrapAppState :: AppConfig -> IO AppState
+bootstrapAppState conf@AppConfig{..} = do
   -- communication chans
   appMsgChan <- Bk.newBChan 10
   sStateChan <- newChan
 
   -- initial state
-  sStateMay <- unserializeState syncStateStorage
   mgr <- HTTP.newManager HTTP.tlsManagerSettings
   let syncEnv = SS.SyncEnv
         { statePushChan = sStateChan
@@ -146,7 +99,11 @@ bootstrapApp AppConfig{..} = do
         , syncDir = syncDir
         , syncPathMapper = defaultSyncPathMapper syncDir
         }
-      syncState0 = fromMaybe mempty sStateMay
+  syncState0 <- decodeState `catch` \(e :: SomeException) -> do
+    hPutStrLn stderr $
+      "Unable to load sync state, err: " ++ show e
+      ++ "\nFalling back to default state..."
+    return mempty
 
   -- workers
   _ <- forkIO $ runStateBackupWorker syncStateStorage sStateChan appMsgChan
@@ -161,13 +118,40 @@ bootstrapApp AppConfig{..} = do
         writeChan sStateChan finalState
 
   return AppState
-    {
+    { appConfig = conf
+    , appActionHistory = mempty
+    , appPendingActions = mempty
+    , appPendingConflicts = mempty
+    , appLogs = mempty
+    , appMsgQueue = mempty
+    , appWorkingArea = mempty
     }
   where
-    unserializeState = undefined
+    decodeState = do
+      bs <- B.readFile (P.encodeString syncStateStorage)
+      either fail return (Ser.decode bs)
 
-drawUI :: AppState -> [Bk.Widget Name]
-drawUI st = undefined
+-- continually execute pending items in the state until stop
+fillWorkingArea :: MonadIO m => AppState -> m AppState
+fillWorkingArea st@AppState{appWorkingArea=NoWork, appMsgQueue}
+  | next Seq.:< rest <- Seq.viewl appMsgQueue = _ -- TODO: deal with it
+  | otherwise = return st -- all done!
+fillWorkingArea st
+  -- working area already filled
+  = return st
+
+-- this typically involves looking at the working area and do things as needed
+handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
+handleVtyEvent = _
 
 handleEvent :: AppState -> Bk.BrickEvent Name AppMsg -> Bk.EventM Name (Bk.Next AppState)
-handleEvent st = undefined
+handleEvent st (Bk.AppEvent msg)
+  = fillWorkingArea st{ appMsgQueue = msg Seq.<| appMsgQueue st } >>= Bk.continue
+handleEvent st (Bk.VtyEvent evt)
+  = handleVtyEvent st evt
+handleEvent st _
+  -- ignore mouse events
+  = Bk.continue st
+
+drawUI :: AppState -> [Bk.Widget Name]
+drawUI st = _
