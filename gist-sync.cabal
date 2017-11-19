@@ -24,19 +24,10 @@ library
                      , unordered-containers
                      , text
                      , system-filepath
-                     , time
                      , cryptonite
                      , lens
-                     , bytestring
                      , servant-github
-                     , http-client
-                     , servant-client
-                     , mtl
-                     , regex-tdfa
-                     , turtle
-                     , foldl
-                     , managed
-                     , exceptions
+                     , time
   default-language:    Haskell2010
 
 executable gist-sync
@@ -46,6 +37,26 @@ executable gist-sync
   hs-source-dirs:      app
   main-is:             Main.hs
   build-depends:       base >=4.8 && <5
+                     , gist-sync
+                     , system-filepath
+                     , text
+                     , foldl
+                     , turtle
+                     , cryptonite
+                     , containers
+                     , regex-tdfa
+                     , aeson
+                     , brick
+                     , yaml
+                     , http-client
+                     , http-client-tls
+                     , mtl
+                     , http-client
+                     , servant-client
+                     , servant-github
+                     , bytestring
+                     , time
+                     , parsec
   default-language:    Haskell2010
 
   ghc-options:         -Wall -threaded -stubdir cbits
