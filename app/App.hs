@@ -189,11 +189,13 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
     actions = sort $ rights plans'
     conflictsMay = uncons $ lefts plans'
 
-applyMsg :: LogMsg -> AppState -> AppState
-applyMsg msg st = Trace.traceShow msg st
-  { appLogs = appLogs st Seq.|> msg
-  , appWorkingArea = DisplayMsg msg
-  }
+applyMsg :: MonadIO m => LogMsg -> AppState -> m AppState
+applyMsg msg st = Trace.traceShow msg $ do
+  now <- liftIO Time.getCurrentTime
+  return st
+    { appLogs = appLogs st Seq.|> (now, msg)
+    , appWorkingArea = DisplayMsg msg
+    }
 
 -- continually execute pending items in the state until stop
 processMsgQueue :: MonadIO m => AppState -> m AppState
@@ -204,19 +206,18 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
         applySyncPlans plans msgMVar st{ appMsgQueue = rest }
       SyncActionsPerformed actions -> do
         now <- liftIO Time.getCurrentTime
-        return . flip applyMsg st
-                   { appActionHistory = appActionHistory Seq.><
-                                        Seq.fromList ((now,) <$> actions) }
-               . LogMsg Log $ "Synced! Actions: " <> T.pack (show actions)
+        applyMsg (LogMsg Log $ "Synced! Performed "
+                   <> (T.pack . show . length $ actions) <> " actions")
+          st { appActionHistory = appActionHistory Seq.><
+                                  Seq.fromList ((now,) <$> actions)
+             }
       SyncStatePersisted _ ->
         -- ignoring this message for the moment
         return st
       SyncWorkerError err ->
-        return . flip applyMsg st . LogMsg Error $
-        "SyncWorker: " <> T.pack (show err)
+        flip applyMsg st . LogMsg Error $ "SyncWorker: " <> T.pack (show err)
       SyncWorkerDied err ->
-        return . flip applyMsg st . LogMsg Error $
-        "SyncWorker died! " <> T.pack (show err)
+        flip applyMsg st . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
   | otherwise = return st -- no more messages!
 
 -- this typically involves looking at the working area and do things as needed

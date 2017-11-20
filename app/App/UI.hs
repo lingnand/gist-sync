@@ -15,6 +15,8 @@ import           Data.Monoid
 import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import           Data.Time.Clock
+import           Data.Time.Format
+import qualified SyncState as SS
 
 textPad :: Int
 textPad = 3
@@ -39,14 +41,14 @@ drawConfig AppConfig{..} =
 
 drawActionHistory
   :: Int
-  -> ActionHistory
+  -> Seq.Seq (Timestamped SS.SyncAction')
   -> Widget n
 drawActionHistory = drawSequence "Recent actions" shower
-  where shower (t, act) = T.pack $ show t++" "++show act
+  where shower act = T.pack $ show act
 
 drawLogs
   :: Int
-  -> Seq.Seq LogMsg
+  -> Seq.Seq (Timestamped LogMsg)
   -> Widget n
 drawLogs = drawSequence "Log" shower
   where shower (LogMsg lvl msg) = T.pack (show lvl) <> msg
@@ -55,9 +57,11 @@ drawSequence
   :: T.Text        -- ^ title
   -> (a -> T.Text) -- ^ function to show
   -> Int           -- ^ number of most recent items to show
-  -> Seq.Seq a
+  -> Seq.Seq (Timestamped a)
   -> Widget n
 drawSequence title shower nRecent seq =
   borderWithLabel (txt title) $
-    padAll textPad . center . txtWrap . T.unlines . toList $ shower <$> items
+    padAll textPad . center . txtWrap . T.unlines . toList $ shower' <$> items
   where items = Seq.drop (max 0 (Seq.length seq - nRecent)) seq
+        shower' (t, a) = T.pack (formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" t)
+                      <> " " <> shower a
