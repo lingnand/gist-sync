@@ -3,6 +3,7 @@
 module App.Types
   (
     AppState(..)
+  , ActionHistory
   , LogLvl(..)
   , LogMsg(..)
   , Name
@@ -31,11 +32,13 @@ import qualified SyncState as SS
 import qualified SyncStrategy as SStrat
 
 -- | the UI state
+type ActionHistory = Seq.Seq (Time.UTCTime, SS.SyncAction')
+
 data AppState = AppState
   {
     appConfig :: AppConfig
   -- ^ needed for rendering, but should never change during app run
-  , appActionHistory :: Seq.Seq (Time.UTCTime, SS.SyncAction')
+  , appActionHistory :: ActionHistory
 
   , appLogs :: Seq.Seq LogMsg
   -- ^ currently a bounded queue in memory, but can dump to somewhere if needed

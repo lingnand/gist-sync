@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -196,14 +197,17 @@ applyMsg msg st = Trace.traceShow msg st
 
 -- continually execute pending items in the state until stop
 processMsgQueue :: MonadIO m => AppState -> m AppState
-processMsgQueue st@AppState{appWorkingArea, appMsgQueue}
+processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
   | areaLockedToCurrentWork appWorkingArea = return st
   | next Seq.:< rest <- Seq.viewl appMsgQueue = case next of
       SyncPlansPending plans msgMVar ->
         applySyncPlans plans msgMVar st{ appMsgQueue = rest }
-      SyncActionsPerformed actions ->
-        return . flip applyMsg st . LogMsg Log $
-        "Synced! Actions: " <> T.pack (show actions)
+      SyncActionsPerformed actions -> do
+        now <- liftIO Time.getCurrentTime
+        return . flip applyMsg st
+                   { appActionHistory = appActionHistory Seq.><
+                                        Seq.fromList ((now,) <$> actions) }
+               . LogMsg Log $ "Synced! Actions: " <> T.pack (show actions)
       SyncStatePersisted _ ->
         -- ignoring this message for the moment
         return st
