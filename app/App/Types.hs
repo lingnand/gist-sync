@@ -49,7 +49,10 @@ data AppState = AppState
   }
 
 data LogLvl = Log | Warn | Error deriving (Show, Eq, Enum, Bounded)
-data LogMsg = LogMsg LogLvl T.Text deriving (Show)
+data LogMsg = LogMsg
+  { logLvl :: LogLvl
+  , logMsg :: T.Text
+  } deriving (Show, Eq)
 
 type Name = ()
 
@@ -105,8 +108,8 @@ data AppWorkingArea = SyncPlansResolveConflict
                       { originalPlans     :: [SS.SyncPlan']
                       , performingActions :: [SS.SyncAction']
                       }
-                    | DisplayMsg
-                      { displayMsg :: LogMsg
+                    | AlertMsg
+                      { alertMsg :: LogMsg
                       }
                     | NoWork -- nothing outstanding
 
@@ -119,7 +122,7 @@ instance Monoid AppWorkingArea where
 -- | Determines whether the working area can be open for use on new task
 areaLockedToCurrentWork :: AppWorkingArea -> Bool
 areaLockedToCurrentWork NoWork = False
-areaLockedToCurrentWork DisplayMsg{} = False
+areaLockedToCurrentWork AlertMsg{} = True
 areaLockedToCurrentWork SyncPlansWaitPerform{} = True
 areaLockedToCurrentWork SyncPlansResolveConflict{} = True
 

@@ -75,7 +75,7 @@ data SyncConflict a = SyncConflict
   , conflictRemoteGistFileId :: GistFileId
   , conflictRemoteFileURL    :: T.Text
   , conflictRemoteUpdateTime :: UTCTime
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Ord)
 
 -- | A isomorphism between local file path and gist file id
 newtype PathMapper = PathMapper { unPathMapper :: Iso' P.FilePath Gist.FileId }

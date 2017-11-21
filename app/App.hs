@@ -95,11 +95,14 @@ defaultSyncPathMapper syncDir = S.pathMapper pathToId idToPath
 appConfigFromYaml :: P.FilePath -> IO (Maybe AppConfig)
 appConfigFromYaml = Y.decodeFile . P.encodeString
 
+appMsgLimit :: Int
+appMsgLimit = 5
+
 -- | start the workers and return the initial app state
 bootstrapAppState :: AppConfig -> IO AppState
 bootstrapAppState conf@AppConfig{..} = do
   -- communication chans
-  appMsgChan <- Bk.newBChan 10
+  appMsgChan <- Bk.newBChan appMsgLimit
   sStateChan <- newChan
 
   -- initial state
@@ -174,7 +177,7 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
   -- apply the default strategy
   | Just (conflictHead, more) <- conflictsMay = return st
       { appWorkingArea = SyncPlansResolveConflict
-          { originalPlans = plans
+          { originalPlans = sortedPlans
           , pendingActions = actions
           , pendingConflicts = more
           , currentConflict = conflictHead
@@ -183,10 +186,11 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
           , replyMVar = msgMVar
           }
       }
-  | otherwise = applyWaitPerform plans msgMVar actions st
+  | otherwise = applyWaitPerform sortedPlans msgMVar actions st
   where
-    plans' = SStrat.applyStrategyToList (syncStrategy appConfig) plans
-    actions = sort $ rights plans'
+    sortedPlans = sort plans
+    plans' = SStrat.applyStrategyToList (syncStrategy appConfig) sortedPlans
+    actions = rights plans'
     conflictsMay = uncons $ lefts plans'
 
 applyMsg :: MonadIO m => LogMsg -> AppState -> m AppState
@@ -194,8 +198,10 @@ applyMsg msg st = Trace.traceShow msg $ do
   now <- liftIO Time.getCurrentTime
   return st
     { appLogs = appLogs st Seq.|> (now, msg)
-    , appWorkingArea = DisplayMsg msg
+    , appWorkingArea = area
     }
+  where area | logLvl msg == Error = AlertMsg msg
+             | otherwise           = appWorkingArea st
 
 -- continually execute pending items in the state until stop
 processMsgQueue :: MonadIO m => AppState -> m AppState
@@ -224,41 +230,42 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
 handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
 -- global events are handled first
 handleVtyEvent st (V.EvKey (V.KChar 'q') []) = Bk.halt st
-handleVtyEvent st@AppState{appWorkingArea} evt
-  | SyncPlansResolveConflict{ strategyChoice, .. } <- appWorkingArea =
-      case evt of
-        V.EvKey V.KEnter []
-          | Just strat <- Bk.dialogSelection strategyChoice ->
-              case SStrat.applyStrategy strat (Left currentConflict) of
-                Just (Right act) -> handleAct (Just act)
-                Just (Left conflict') -> Bk.continue $ st
+handleVtyEvent st@AppState{appWorkingArea} evt = case appWorkingArea of
+  NoWork -> Bk.continue st
+  SyncPlansResolveConflict{ strategyChoice, .. } ->
+    case evt of
+      V.EvKey V.KEnter []
+        | Just strat <- Bk.dialogSelection strategyChoice ->
+            case SStrat.applyStrategy strat (Left currentConflict) of
+              Just (Right act) -> handleAct (Just act)
+              Just (Left conflict') -> Bk.continue $ st
+                { appWorkingArea = appWorkingArea
+                  { currentConflict = conflict' }
+                }
+              -- conflict is ignored
+              Nothing -> handleAct Nothing
+            where
+              handleAct actMay
+                | conflict':more' <- pendingConflicts = Bk.continue st
                   { appWorkingArea = appWorkingArea
-                    { currentConflict = conflict' }
-                  }
-                -- conflict is ignored
-                Nothing -> handleAct Nothing
-              where
-                handleAct actMay
-                  | conflict':more' <- pendingConflicts = Bk.continue st
-                    { appWorkingArea = appWorkingArea
-                      { pendingActions = acts'
-                      , pendingConflicts = more'
-                      , currentConflict = conflict'
-                      }
+                    { pendingActions = acts'
+                    , pendingConflicts = more'
+                    , currentConflict = conflict'
                     }
-                  | otherwise = applyWaitPerform originalPlans replyMVar acts' st
-                            >>= Bk.continue
-                  where acts' = pendingActions++maybeToList actMay
-        _ -> do
-          d' <- Bk.handleDialogEvent evt strategyChoice
-          Bk.continue st{ appWorkingArea = appWorkingArea{ strategyChoice = d' } }
+                  }
+                | otherwise = applyWaitPerform originalPlans replyMVar acts' st
+                          >>= Bk.continue
+                where acts' = pendingActions++maybeToList actMay
+      _ -> do
+        d' <- Bk.handleDialogEvent evt strategyChoice
+        Bk.continue st{ appWorkingArea = appWorkingArea{ strategyChoice = d' } }
 
-  | not (areaLockedToCurrentWork appWorkingArea) = case evt of
+  AlertMsg{} -> case evt of
       -- dismiss working area
       V.EvKey V.KEnter [] -> Bk.continue st{ appWorkingArea = NoWork }
       _ -> Bk.continue st
 
-  | otherwise = Bk.continue st
+  _ -> Bk.continue st
 
 handleEvent :: AppState -> Bk.BrickEvent Name AppMsg -> Bk.EventM Name (Bk.Next AppState)
 handleEvent st (Bk.AppEvent msg)
