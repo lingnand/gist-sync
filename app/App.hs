@@ -232,33 +232,32 @@ handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
 handleVtyEvent st (V.EvKey (V.KChar 'q') []) = Bk.halt st
 handleVtyEvent st@AppState{appWorkingArea} evt = case appWorkingArea of
   NoWork -> Bk.continue st
-  SyncPlansResolveConflict{ strategyChoice, .. } ->
-    case evt of
-      V.EvKey V.KEnter []
-        | Just strat <- Bk.dialogSelection strategyChoice ->
-            case SStrat.applyStrategy strat (Left currentConflict) of
-              Just (Right act) -> handleAct (Just act)
-              Just (Left conflict') -> Bk.continue $ st
-                { appWorkingArea = appWorkingArea
-                  { currentConflict = conflict' }
-                }
-              -- conflict is ignored
-              Nothing -> handleAct Nothing
-            where
-              handleAct actMay
-                | conflict':more' <- pendingConflicts = Bk.continue st
-                  { appWorkingArea = appWorkingArea
-                    { pendingActions = acts'
-                    , pendingConflicts = more'
-                    , currentConflict = conflict'
-                    }
-                  }
-                | otherwise = applyWaitPerform originalPlans replyMVar acts' st
-                          >>= Bk.continue
-                where acts' = pendingActions++maybeToList actMay
-      _ -> do
+  SyncPlansResolveConflict{ strategyChoice, .. }
+    | V.EvKey V.KEnter [] <- evt
+    , Just strat <- Bk.dialogSelection strategyChoice ->
+      case SStrat.applyStrategy strat (Left currentConflict) of
+        Just (Right act) -> handleAct (Just act)
+        Just (Left conflict') -> Bk.continue $ st
+          { appWorkingArea = appWorkingArea
+            { currentConflict = conflict' }
+          }
+        -- conflict is ignored
+        Nothing -> handleAct Nothing
+    | otherwise -> do
         d' <- Bk.handleDialogEvent evt strategyChoice
         Bk.continue st{ appWorkingArea = appWorkingArea{ strategyChoice = d' } }
+      where
+        handleAct actMay
+          | conflict':more' <- pendingConflicts = Bk.continue st
+            { appWorkingArea = appWorkingArea
+              { pendingActions = acts'
+              , pendingConflicts = more'
+              , currentConflict = conflict'
+              }
+            }
+          | otherwise = applyWaitPerform originalPlans replyMVar acts' st
+                    >>= Bk.continue
+          where acts' = pendingActions++maybeToList actMay
 
   AlertMsg{} -> case evt of
       -- dismiss working area

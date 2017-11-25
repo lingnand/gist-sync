@@ -6,15 +6,16 @@ module App.UI
   , drawUI
   ) where
 
-import           Data.Bits ((.|.))
 import           App.Types
 import           Brick
 import           Brick.Widgets.Border
 import           Brick.Widgets.Center
 import           Brick.Widgets.Dialog
+import           Data.Bits ((.|.))
 import           Data.Either
 import           Data.Foldable (toList)
 import           Data.List
+import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Sequence as Seq
 import qualified Data.Text as T
@@ -44,7 +45,17 @@ getAttrMap _ = attrMap V.defAttr
   ]
 
 drawUI :: AppState -> [Widget Name]
-drawUI st = _
+drawUI AppState{..} = maybeToList dialogMay ++ [mainLayer]
+  where
+    (dialogMay, status) = drawWorkingArea appWorkingArea
+    mainLayer =
+      borderWithLabel (txt "Config") (drawConfig appConfig)
+      <=>
+      borderWithLabel (txt "Recent actions") (drawActionHistory 10 appActionHistory)
+      <=>
+      borderWithLabel (txt "Log") (drawLogs 10 appLogs)
+      <=>
+      borderWithLabel (txt "Status") status
 
 drawKV :: T.Text -> T.Text -> Widget n
 drawKV k v = padLeftRight textPad $ txt (k <> ": " <> v)
@@ -66,23 +77,22 @@ timeShowT format = T.pack . formatTime defaultTimeLocale format
 
 drawConfig :: AppConfig -> Widget n
 drawConfig AppConfig{..} =
-  borderWithLabel (txt "Config") $
-    hCenter (drawKV "sync-state-storage" (pShowT syncStateStorage))
-    <=>
-    hBorder
-    <=>
-    (hCenter (drawKV "sync-dir" (pShowT syncDir))
-     <+>
-     hCenter (drawKV "sync-interval" (showT syncInterval)))
+  hCenter (drawKV "sync-state-storage" (pShowT syncStateStorage))
+  <=>
+  hBorder
+  <=>
+  (hCenter (drawKV "sync-dir" (pShowT syncDir))
+    <+>
+    hCenter (drawKV "sync-interval" (showT syncInterval)))
 
 drawActionHistory
   :: Int
   -> Seq.Seq (Timestamped SS.SyncAction')
   -> Widget n
-drawActionHistory = drawSequence "Recent actions" (txtWrap . showT)
+drawActionHistory = drawSequence (txtWrap . showT)
 
 drawLog :: LogMsg -> Widget n
-drawLog msg@(LogMsg lvl text) =
+drawLog (LogMsg lvl text) =
   withAttr (lAttr lvl) (txt $ showT lvl) <+> padLeft (Pad 2) (txtWrap text)
   where lAttr Error = logLabelErrorAttr
         lAttr Warn = logLabelWarnAttr
@@ -92,18 +102,15 @@ drawLogs
   :: Int
   -> Seq.Seq (Timestamped LogMsg)
   -> Widget n
-drawLogs = drawSequence "Log" drawLog
+drawLogs = drawSequence drawLog
 
 drawSequence
-  :: T.Text        -- ^ title
-  -> (a -> Widget n) -- ^ function to show
+  :: (a -> Widget n) -- ^ function to show
   -> Int           -- ^ number of most recent items to show
   -> Seq.Seq (Timestamped a)
   -> Widget n
-drawSequence title drawer nRecent seq =
-  borderWithLabel (txt title) $
-    hCenter . vBox . toList $ draw <$> items
-  where items = Seq.drop (max 0 (Seq.length seq - nRecent)) seq
+drawSequence drawer nRecent sq = hCenter . vBox . toList $ draw <$> items
+  where items = Seq.drop (max 0 (Seq.length sq - nRecent)) sq
         draw (t, a) =  txt (timeShowT "%Y-%m-%d %H:%M:%S" t) <+> padLeft (Pad 2) (drawer a)
 
 -- align the actions and draw them as a list of columns
