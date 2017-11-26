@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -9,12 +10,18 @@ module App
   ( app
 
   , appConfigFromYaml
-  , bootstrapAppState
+  , initStates
+
+  , runSyncWorker
+  , runStateBackupWorker
+
+  , module App.Types
   ) where
 
 import qualified Brick as Bk
 import qualified Brick.BChan as Bk
 import qualified Brick.Widgets.Dialog as Bk
+import           Control.Applicative
 import           Control.Concurrent
 import           Control.Exception
 import           Control.Monad
@@ -65,55 +72,65 @@ runStateBackupWorker outputPath stateUpdChan msgChan = forever $ do
 runSyncWorker
   :: Time.NominalDiffTime
   -> Bk.BChan AppMsg
-  -> SS.SyncM ()
-runSyncWorker interval msgChan = forever $
-  -- catch error in each run, note this doesn't prevent from IOException
-  -- terminating the thread
-  oneRun `catchError` \e ->
-    liftIO . Bk.writeBChan msgChan $ SyncWorkerError e
-    -- ignoring it and continue...
+  -> SS.SyncEnv
+  -> SS.SyncState
+  -> IO ()
+runSyncWorker interval msgChan syncEnv syncState0 = do
+  result <- SS.runSyncM runM syncEnv syncState0
+  case result of
+    Left err -> Bk.writeBChan msgChan $ SyncWorkerDied err
+    Right (_, finalState) -> do
+      Bk.writeBChan msgChan . SyncWorkerDied . SS.OtherException . SomeException $
+        userError "Impossible error: worker finished with final state!"
+      -- backup just in case
+      writeChan (SS.statePushChan syncEnv) finalState
   where
-    oneRun = do
-      -- immediately do a sync
-      now <- liftIO Time.getCurrentTime
-      plans <- SS.genSyncPlans
-      filteredActions <- liftIO $ do
-        respMVar <- newEmptyMVar
-        liftIO . Bk.writeBChan msgChan $ SyncPlansPending plans respMVar
-        readMVar respMVar
-      SS.performSyncActions now filteredActions
-      liftIO $ do
-        Bk.writeBChan msgChan $ SyncActionsPerformed filteredActions
-        -- wait for said time
-        threadDelay $ ceiling (interval * 1e6)
+    runM = forever $
+      -- catch error in each run, note this doesn't prevent from IOException
+      -- terminating the thread
+      oneRun `catchError` \e ->
+        liftIO . Bk.writeBChan msgChan $ SyncWorkerError e
+        -- ignoring it and continue...
+      where
+        oneRun = do
+          -- immediately do a sync
+          now <- liftIO Time.getCurrentTime
+          plans <- SS.genSyncPlans
+          filteredActions <- liftIO $ do
+            respMVar <- newEmptyMVar
+            liftIO . Bk.writeBChan msgChan $ SyncPlansPending plans respMVar
+            readMVar respMVar
+          SS.performSyncActions now filteredActions
+          liftIO $ do
+            Bk.writeBChan msgChan $ SyncActionsPerformed filteredActions
+            -- wait for said time
+            threadDelay $ ceiling (interval * 1e6)
 
 defaultSyncPathMapper :: P.FilePath -> S.PathMapper
 defaultSyncPathMapper syncDir = S.pathMapper pathToId idToPath
   where pathToId = either id id . P.toText . P.filename
         idToPath = (syncDir P.</>) . P.fromText
 
-appConfigFromYaml :: P.FilePath -> IO (Maybe AppConfig)
+appConfigFromYaml
+  :: Alternative f
+  => P.FilePath -> IO (Maybe (AppConfig' f))
 appConfigFromYaml = Y.decodeFile . P.encodeString
 
-appMsgLimit :: Int
-appMsgLimit = 5
-
--- | start the workers and return the initial app state
-bootstrapAppState :: AppConfig -> IO AppState
-bootstrapAppState conf@AppConfig{..} = do
-  -- communication chans
-  appMsgChan <- Bk.newBChan appMsgLimit
-  sStateChan <- newChan
-
+-- | init the various env/states
+initStates
+  :: Chan SS.SyncState -- state communication chan
+  -> AppConfig
+  -> IO ((SS.SyncEnv, SS.SyncState), AppState)
+initStates sStateChan conf = do
   -- initial state
   mgr <- HTTP.newManager HTTP.tlsManagerSettings
   let syncEnv = SS.SyncEnv
         { statePushChan = sStateChan
         , manager = mgr
-        , githubHost = githubHost
-        , githubToken = githubToken
-        , syncDir = syncDir
-        , syncPathMapper = defaultSyncPathMapper syncDir
+        , githubHost = githubHost conf
+        , githubToken = githubToken conf
+        , syncDir = syncDir conf
+        , syncPathMapper = defaultSyncPathMapper (syncDir conf)
         }
   syncState0 <- decodeState `catch` \(e :: SomeException) -> do
     hPutStrLn stderr $
@@ -121,29 +138,18 @@ bootstrapAppState conf@AppConfig{..} = do
       ++ "\nFalling back to default state..."
     return mempty
 
-  -- workers
-  _ <- forkIO $ runStateBackupWorker syncStateStorage sStateChan appMsgChan
-  _ <- forkIO $ do
-    result <- SS.runSyncM (runSyncWorker syncInterval appMsgChan) syncEnv syncState0
-    case result of
-      Left err -> Bk.writeBChan appMsgChan $ SyncWorkerDied err
-      Right (_, finalState) -> do
-        Bk.writeBChan appMsgChan . SyncWorkerDied . SS.OtherException . SomeException $
-          userError "Impossible error: worker finished with final state!"
-        -- backup just in case
-        writeChan sStateChan finalState
-
-  return AppState
-    { appConfig = conf
-    , appActionHistory = mempty
-    , appLogs = mempty
-    , appMsgQueue = mempty
-    , appWorkingArea = mempty
-    }
+  return ((syncEnv, syncState0), appState)
   where
     decodeState = do
-      bs <- B.readFile (P.encodeString syncStateStorage)
+      bs <- B.readFile (P.encodeString $ syncStateStorage conf)
       either fail return (Ser.decode bs)
+    appState = AppState
+      { appConfig = conf
+      , appActionHistory = mempty
+      , appLogs = mempty
+      , appMsgQueue = mempty
+      , appWorkingArea = mempty
+      }
 
 defaultConflictResolveStrategies :: [(String, SStrat.SyncStrategy)]
 defaultConflictResolveStrategies =

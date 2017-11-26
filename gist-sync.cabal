@@ -64,6 +64,8 @@ executable gist-sync
                      , vty
                      , cereal
                      , memory
+                     , transformers
+                     , optparse-applicative
   default-language:    Haskell2010
 
   ghc-options:         -Wall -threaded -stubdir cbits -fdefer-typed-holes

@@ -76,12 +76,12 @@ timeShowT :: String -> UTCTime -> T.Text
 timeShowT format = T.pack . formatTime defaultTimeLocale format
 
 drawConfig :: AppConfig -> Widget n
-drawConfig AppConfig{..} =
-  hCenter (drawKV "sync-state-storage" (pShowT syncStateStorage))
+drawConfig conf =
+  hCenter (drawKV "sync-state-storage" (pShowT $ syncStateStorage conf))
   <=>
   hBorder
   <=>
-  (hCenter (drawKV "sync-dir" (pShowT syncDir))
+  (hCenter (drawKV "sync-dir" (pShowT $ syncDir conf))
     <+>
     hCenter (drawKV "sync-interval" (showT syncInterval)))
 
