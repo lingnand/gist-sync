@@ -33,6 +33,7 @@ library
 executable gist-sync
   -- exposed-modules:     
   other-modules:       App.Types
+                     , App.Types.Config
                      , App.UI
                      , App
                      , SyncState
