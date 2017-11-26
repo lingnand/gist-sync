@@ -99,15 +99,7 @@ runMode :: AppConfig -> RunMode
 runMode = runIdentity . _runMode
 
 hoistConfig :: (forall a. f a -> g a) -> AppConfig' f -> AppConfig' g
-hoistConfig f AppConfig'{..} = AppConfig'
-  { _syncStateStorage  = f _syncStateStorage
-  , _githubHost        = f _githubHost
-  , _githubToken       = f _githubToken
-  , _syncDir           = f _syncDir
-  , _syncInterval      = f _syncInterval
-  , _syncStrategy      = f _syncStrategy
-  , _runMode           = f _runMode
-  }
+hoistConfig f = runIdentity . evalConfig' (Identity . f)
 
 evalConfig'
   :: Applicative g
