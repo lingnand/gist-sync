@@ -155,7 +155,6 @@ genSyncPlans = do
   -- merge with the existing sync files
   syncFs <- gets syncFiles
   let fs' = M.elems $ (Right <$> syncFs) <> M.fromList [ (f, Left f) | f <- fs ]
-  liftIO . putStrLn $ "localFiles: " ++ show fs'
   infos <- forM fs' $ \f -> do
     let p = either id S.syncFilePath f
     modT <- Ttl.modificationTime <$> Ttl.lstat p

@@ -83,13 +83,13 @@ drawConfig conf =
   <=>
   (hCenter (drawKV "sync-dir" (pShowT $ syncDir conf))
     <+>
-    hCenter (drawKV "sync-interval" (showT syncInterval)))
+    hCenter (drawKV "sync-interval" (showT $ syncInterval conf)))
 
 drawActionHistory
   :: Int
   -> Seq.Seq (Timestamped SS.SyncAction')
   -> Widget n
-drawActionHistory = drawSequence (txtWrap . showT)
+drawActionHistory = drawSequence (txt "No action history.") (txtWrap . showT)
 
 drawLog :: LogMsg -> Widget n
 drawLog (LogMsg lvl text) =
@@ -102,14 +102,17 @@ drawLogs
   :: Int
   -> Seq.Seq (Timestamped LogMsg)
   -> Widget n
-drawLogs = drawSequence drawLog
+drawLogs = drawSequence (txt "No logs.") drawLog
 
 drawSequence
-  :: (a -> Widget n) -- ^ function to show
+  :: Widget n        -- ^ empty display
+  -> (a -> Widget n) -- ^ function to show
   -> Int           -- ^ number of most recent items to show
   -> Seq.Seq (Timestamped a)
   -> Widget n
-drawSequence drawer nRecent sq = hCenter . vBox . toList $ draw <$> items
+drawSequence empty drawer nRecent sq
+  | Seq.null sq = hCenter empty
+  | otherwise =  hCenter . vBox . toList $ draw <$> items
   where items = Seq.drop (max 0 (Seq.length sq - nRecent)) sq
         draw (t, a) =  txt (timeShowT "%Y-%m-%d %H:%M:%S" t) <+> padLeft (Pad 2) (drawer a)
 
@@ -165,12 +168,12 @@ drawWorkingArea SyncPlansWaitPerform{..}
       hCenter (txt "Performing actions...")
       <=>
       (borderWithLabel (txt "Original")
-        (hCenter . hBox $ drawPlans originalPlans)
-        <+>
-        vBorder
-        <+>
-        borderWithLabel (txt "Actions")
-        (hCenter . hBox $ drawActions performingActions))
+       (hCenter . hBox $ drawPlans originalPlans)
+       <+>
+       vBorder
+       <+>
+       borderWithLabel (txt "Actions")
+       (hCenter . hBox $ drawActions performingActions))
 drawWorkingArea AlertMsg{..}
   = (Just (renderDialog (dialog (Just "Alert") Nothing 0) dialogBody), wStatus)
   where
