@@ -99,7 +99,7 @@ runSyncWorker interval msgChan syncEnv syncState0 = do
           filteredActions <- liftIO $ do
             respMVar <- newEmptyMVar
             liftIO . Bk.writeBChan msgChan $ SyncPlansPending plans respMVar
-            readMVar respMVar
+            takeMVar respMVar
           SS.performSyncActions now filteredActions
           liftIO $ do
             Bk.writeBChan msgChan $ SyncActionsPerformed filteredActions
@@ -213,23 +213,26 @@ applyMsg msg st = Trace.traceShow msg $ do
 processMsgQueue :: MonadIO m => AppState -> m AppState
 processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
   | areaLockedToCurrentWork appWorkingArea = return st
-  | next Seq.:< rest <- Seq.viewl appMsgQueue = case next of
+  | next Seq.:< rest <- Seq.viewl appMsgQueue =
+    let st' = st{ appMsgQueue = rest }
+    in processMsgQueue =<< case next of
       SyncPlansPending plans msgMVar ->
-        applySyncPlans plans msgMVar st{ appMsgQueue = rest }
+        applySyncPlans plans msgMVar st'
       SyncActionsPerformed actions -> do
         now <- liftIO Time.getCurrentTime
         applyMsg (LogMsg Log $ "Synced! Performed "
                    <> (T.pack . show . length $ actions) <> " actions")
-          st { appActionHistory = appActionHistory Seq.><
-                                  Seq.fromList ((now,) <$> actions)
-             }
+          st' { appActionHistory = appActionHistory Seq.><
+                                   Seq.fromList ((now,) <$> actions)
+              , appWorkingArea = SyncActionsDone{ doneActions = actions }
+              }
       SyncStatePersisted _ ->
         -- ignoring this message for the moment
-        return st
+        return st'
       SyncWorkerError err ->
-        flip applyMsg st . LogMsg Error $ "SyncWorker: " <> T.pack (show err)
+        flip applyMsg st' . LogMsg Error $ "SyncWorker: " <> T.pack (show err)
       SyncWorkerDied err ->
-        flip applyMsg st . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
+        flip applyMsg st' . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
   | otherwise = return st -- no more messages!
 
 -- this typically involves looking at the working area and do things as needed

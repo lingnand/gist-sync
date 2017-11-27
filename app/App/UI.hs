@@ -174,6 +174,14 @@ drawWorkingArea SyncPlansWaitPerform{..}
        <+>
        borderWithLabel (txt "Actions")
        (hCenter . hBox $ drawActions performingActions))
+drawWorkingArea SyncActionsDone{..}
+  = (Nothing, wStatus)
+  where
+    wStatus =
+      hCenter (txt "Done.")
+      <=>
+      borderWithLabel (txt "Actions")
+      (hCenter . hBox $ drawActions doneActions)
 drawWorkingArea AlertMsg{..}
   = (Just (renderDialog (dialog (Just "Alert") Nothing 0) dialogBody), wStatus)
   where

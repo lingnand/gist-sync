@@ -63,6 +63,9 @@ data AppWorkingArea = SyncPlansResolveConflict
                       { originalPlans     :: [SS.SyncPlan']
                       , performingActions :: [SS.SyncAction']
                       }
+                    | SyncActionsDone
+                      { doneActions :: [SS.SyncAction']
+                      }
                     | AlertMsg
                       { alertMsg :: LogMsg
                       }
@@ -77,8 +80,9 @@ instance Monoid AppWorkingArea where
 -- | Determines whether the working area can be open for use on new task
 areaLockedToCurrentWork :: AppWorkingArea -> Bool
 areaLockedToCurrentWork NoWork = False
+areaLockedToCurrentWork SyncPlansWaitPerform{} = False
+areaLockedToCurrentWork SyncActionsDone{} = False
 areaLockedToCurrentWork AlertMsg{} = True
-areaLockedToCurrentWork SyncPlansWaitPerform{} = True
 areaLockedToCurrentWork SyncPlansResolveConflict{} = True
 
 data AppMsg = SyncPlansPending
