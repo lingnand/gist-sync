@@ -120,7 +120,7 @@ instance H.HashAlgorithm a => Ser.Serialize (H.Digest a) where
 deriving instance Generic (S.SyncFile a)
 instance H.HashAlgorithm a => Ser.Serialize (S.SyncFile a)
 
-data SyncState = SyncState
+newtype SyncState = SyncState
   { syncFiles :: M.Map P.FilePath SyncFile'
   } deriving (Show, Eq, Generic)
 

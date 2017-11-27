@@ -51,9 +51,9 @@ drawUI AppState{..} = maybeToList dialogMay ++ [mainLayer]
     mainLayer =
       borderWithLabel (txt "Config") (drawConfig appConfig)
       <=>
-      borderWithLabel (txt "Recent actions") (drawActionHistory 10 appActionHistory)
+      borderWithLabel (txt "Recent actions") (drawActionHistory 5 appActionHistory)
       <=>
-      borderWithLabel (txt "Log") (drawLogs 10 appLogs)
+      borderWithLabel (txt "Log") (drawLogs 5 appLogs)
       <=>
       borderWithLabel (txt "Status") status
 
@@ -146,6 +146,14 @@ drawPlans _ plans = drawConflicts emptyWidget conflicts <=> drawActions emptyWid
   where conflicts = lefts plans
         actions = rights plans
 
+drawComparisonPanes :: (T.Text, Widget n) -> (T.Text, Widget n) -> Widget n
+drawComparisonPanes (upLabel, up) (downLabel, down) =
+  borderWithLabel (txt upLabel) (center up)
+  <=>
+  hBorder
+  <=>
+  borderWithLabel (txt downLabel) (center down)
+
 -- | draw working area as (Maybe a top layer, status layer)
 drawWorkingArea :: AppWorkingArea -> (Maybe (Widget n), Widget n)
 drawWorkingArea AreaSyncPlansResolveConflict{..}
@@ -157,13 +165,9 @@ drawWorkingArea AreaSyncPlansResolveConflict{..}
     dialogBody =
       hCenter (txt "Please choose an option for current conflict")
       <=>
-      (borderWithLabel (txt "Original")
-       (center $ drawPlans (txt "No Plans") areaOriginalPlans)
-       <+>
-       vBorder
-       <+>
-       borderWithLabel (txt "Pending")
-       (center $ wCurrConflict <=> others))
+      drawComparisonPanes
+      ("Original", drawPlans (txt "No Plans") areaOriginalPlans)
+      ("Pending", wCurrConflict <=> others)
     wStatus = hCenter $ txt "Conflicts detected, resolving"
 drawWorkingArea AreaSyncPlansWaitPerform{..}
   = (Nothing, wStatus)
@@ -171,26 +175,18 @@ drawWorkingArea AreaSyncPlansWaitPerform{..}
     wStatus =
       hCenter (txt "Performing actions...")
       <=>
-      (borderWithLabel (txt "Original")
-       (center $ drawPlans (txt "No Plans") areaOriginalPlans)
-       <+>
-       vBorder
-       <+>
-       borderWithLabel (txt "Actions")
-       (center $ drawActions (txt "No Actions") areaPerformingActions))
+      drawComparisonPanes
+      ("Original", drawPlans (txt "No Plans") areaOriginalPlans)
+      ("Actions", drawActions (txt "No Actions") areaPerformingActions)
 drawWorkingArea AreaSyncActionsPerformed{..}
   = (Nothing, wStatus)
   where
     wStatus =
       hCenter (txt "Done.")
       <=>
-      (borderWithLabel (txt "Original")
-       (center $ drawPlans (txt "No Plans") areaOriginalPlans)
-       <+>
-       vBorder
-       <+>
-       borderWithLabel (txt "Actions")
-       (center $ drawActions (txt "No Actions") areaPerformedActions))
+      drawComparisonPanes
+      ("Original", drawPlans (txt "No Plans") areaOriginalPlans)
+      ("Actions", drawActions (txt "No Actions") areaPerformedActions)
 drawWorkingArea AreaAlertMsg{..}
   = (Just (renderDialog (dialog (Just "Alert") Nothing 0) dialogBody), wStatus)
   where
