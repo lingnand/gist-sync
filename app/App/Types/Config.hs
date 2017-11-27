@@ -9,6 +9,7 @@
 module App.Types.Config
   (
     RunMode(..)
+  , Named(..)
   , AppConfig'(..)
   , AppConfig
   , syncStateStorage
@@ -45,6 +46,12 @@ import           Text.Read (readEither)
 data RunMode = Normal | Dry
   deriving (Show, Read, Eq, Enum, Bounded)
 
+-- wrapper that allows storing a name
+data Named a = Named
+  { nameOf  :: T.Text
+  , valueOf :: a
+  }
+
 data AppConfig' f = AppConfig'
   { _syncStateStorage :: f P.FilePath
   -- ^ path to a file that is used to read/write sync state
@@ -53,7 +60,7 @@ data AppConfig' f = AppConfig'
   , _githubToken      :: f G.AuthToken
   , _syncDir          :: f P.FilePath
   , _syncInterval     :: f Time.NominalDiffTime
-  , _syncStrategy     :: f SStrat.SyncStrategy
+  , _syncStrategy     :: f (Named SStrat.SyncStrategy)
   -- ^ strategy to apply after each sync
 
   -- debug
@@ -93,7 +100,7 @@ syncDir :: AppConfig -> P.FilePath
 syncDir = runIdentity . _syncDir
 syncInterval :: AppConfig -> Time.NominalDiffTime
 syncInterval = runIdentity . _syncInterval
-syncStrategy :: AppConfig -> SStrat.SyncStrategy
+syncStrategy :: AppConfig -> Named SStrat.SyncStrategy
 syncStrategy = runIdentity . _syncStrategy
 runMode :: AppConfig -> RunMode
 runMode = runIdentity . _runMode
@@ -122,7 +129,7 @@ type family ParserInput a :: * where
   ParserInput Servant.BaseUrl = String
   ParserInput G.AuthToken = String
   ParserInput Time.NominalDiffTime = Double
-  ParserInput SStrat.SyncStrategy = String
+  ParserInput (Named SStrat.SyncStrategy) = String
   ParserInput RunMode = String
 
 newtype Parser f a = Parser{ runParser :: ParserInput a -> f a }
@@ -140,8 +147,9 @@ configParser = AppConfig'
   , _githubToken      = Parser $ pure . fromString
   , _syncDir          = Parser $ pure . P.fromText
   , _syncInterval     = Parser $ pure . realToFrac
-  , _syncStrategy     = Parser $ either (throwError . show) pure
-                               . SStrat.parseStrategy
+  , _syncStrategy     = Parser $ \str ->
+                          either (throwError . show) (pure . Named (T.pack str))
+                        . SStrat.parseStrategy $ str
   , _runMode          = Parser $ either throwError pure . tryCases
   }
   where

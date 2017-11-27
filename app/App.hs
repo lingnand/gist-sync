@@ -195,7 +195,7 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
   | otherwise = applyWaitPerform sortedPlans msgMVar actions st
   where
     sortedPlans = sort plans
-    plans' = SStrat.applyStrategyToList (syncStrategy appConfig) sortedPlans
+    plans' = SStrat.applyStrategyToList (valueOf $ syncStrategy appConfig) sortedPlans
     actions = rights plans'
     conflictsMay = uncons $ lefts plans'
 

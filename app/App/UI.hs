@@ -77,13 +77,13 @@ timeShowT format = T.pack . formatTime defaultTimeLocale format
 
 drawConfig :: AppConfig -> Widget n
 drawConfig conf =
-  hCenter (drawKV "sync-state-storage" (pShowT $ syncStateStorage conf))
+  (hCenter (drawKV "sync-dir" (pShowT $ syncDir conf)) <+>
+   hCenter (drawKV "sync-state-storage" (pShowT $ syncStateStorage conf)))
   <=>
   hBorder
   <=>
-  (hCenter (drawKV "sync-dir" (pShowT $ syncDir conf))
-    <+>
-    hCenter (drawKV "sync-interval" (showT $ syncInterval conf)))
+  (hCenter (drawKV "sync-strategy" (nameOf $ syncStrategy conf)) <+>
+   hCenter (drawKV "sync-interval" (showT $ syncInterval conf)))
 
 drawActionHistory
   :: Int

@@ -171,7 +171,6 @@ useNewerForConflict = SyncStrategy mapper
         mapper x
           = Just x
 
-
 -- parser for SyncStrategy
 syncStrategyTable :: [(String, SyncStrategy)]
 syncStrategyTable =
