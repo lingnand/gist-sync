@@ -117,8 +117,9 @@ drawSequence empty drawer nRecent sq
         draw (t, a) =  txt (timeShowT "%Y-%m-%d %H:%M:%S" t) <+> padLeft (Pad 2) (drawer a)
 
 -- align the actions and draw them as a list of columns
-drawActions :: [SS.SyncAction'] -> [Widget n]
-drawActions = map vBox . transpose . map widgetR
+drawActions :: Widget n -> [SS.SyncAction'] -> Widget n
+drawActions empty [] = empty
+drawActions _ as = hBox . map vBox . transpose . map widgetR $ as
   where
     r S.UpdateLocal{..}  = [pShowT localFilePath     , "<-", gfidShowT remoteGistFileId]
     r S.CreateLocal{..}  = [pShowT localFilePath<>"*", "<-", gfidShowT remoteGistFileId]
@@ -126,8 +127,9 @@ drawActions = map vBox . transpose . map widgetR
     r S.CreateRemote{..} = [pShowT localFilePath     , "->", fidShowT remoteFileId<>"*"]
     widgetR = map (padLeftRight textPad . txt) . r
 
-drawConflicts :: [SS.SyncConflict'] -> [Widget n]
-drawConflicts = map vBox . transpose . map widgetR
+drawConflicts :: Widget n -> [SS.SyncConflict'] -> Widget n
+drawConflicts empty [] = empty
+drawConflicts _ as = hBox . map vBox . transpose . map widgetR $ as
   where
     timeT = timeShowT "%m-%dT%H:%M"
     widgetR S.SyncConflict{..} = padLeftRight textPad . txt <$>
@@ -138,54 +140,61 @@ drawConflicts = map vBox . transpose . map widgetR
       , gfidShowT conflictRemoteGistFileId <> "@" <> timeT conflictRemoteUpdateTime
       ]
 
-drawPlans :: [SS.SyncPlan'] -> [Widget n]
-drawPlans plans = zipWith (<=>) (drawConflicts conflicts) (drawActions actions)
+drawPlans :: Widget n -> [SS.SyncPlan'] -> Widget n
+drawPlans empty [] = empty
+drawPlans _ plans = drawConflicts emptyWidget conflicts <=> drawActions emptyWidget actions
   where conflicts = lefts plans
         actions = rights plans
 
 -- | draw working area as (Maybe a top layer, status layer)
 drawWorkingArea :: AppWorkingArea -> (Maybe (Widget n), Widget n)
-drawWorkingArea SyncPlansResolveConflict{..}
-  = (Just (renderDialog strategyChoice dialogBody), wStatus)
+drawWorkingArea AreaSyncPlansResolveConflict{..}
+  = (Just (renderDialog areaStrategyChoice dialogBody), wStatus)
   where
-    wCurrConflict = map (withAttr selectionAttr) $ drawConflicts [currentConflict]
-    others = zipWith (<=>) (drawConflicts pendingConflicts) (drawActions pendingActions)
+    wCurrConflict = withAttr selectionAttr $ drawConflicts emptyWidget [areaCurrentConflict]
+    others = drawConflicts emptyWidget areaPendingConflicts
+      <=> drawActions emptyWidget areaPendingActions
     dialogBody =
       hCenter (txt "Please choose an option for current conflict")
       <=>
       (borderWithLabel (txt "Original")
-       (hCenter . hBox $ drawPlans originalPlans)
+       (center $ drawPlans (txt "No Plans") areaOriginalPlans)
        <+>
        vBorder
        <+>
        borderWithLabel (txt "Pending")
-       (hCenter . hBox $ zipWith (<=>) wCurrConflict others))
+       (center $ wCurrConflict <=> others))
     wStatus = hCenter $ txt "Conflicts detected, resolving"
-drawWorkingArea SyncPlansWaitPerform{..}
+drawWorkingArea AreaSyncPlansWaitPerform{..}
   = (Nothing, wStatus)
   where
     wStatus =
       hCenter (txt "Performing actions...")
       <=>
       (borderWithLabel (txt "Original")
-       (hCenter . hBox $ drawPlans originalPlans)
+       (center $ drawPlans (txt "No Plans") areaOriginalPlans)
        <+>
        vBorder
        <+>
        borderWithLabel (txt "Actions")
-       (hCenter . hBox $ drawActions performingActions))
-drawWorkingArea SyncActionsDone{..}
+       (center $ drawActions (txt "No Actions") areaPerformingActions))
+drawWorkingArea AreaSyncActionsPerformed{..}
   = (Nothing, wStatus)
   where
     wStatus =
       hCenter (txt "Done.")
       <=>
-      borderWithLabel (txt "Actions")
-      (hCenter . hBox $ drawActions doneActions)
-drawWorkingArea AlertMsg{..}
+      (borderWithLabel (txt "Original")
+       (center $ drawPlans (txt "No Plans") areaOriginalPlans)
+       <+>
+       vBorder
+       <+>
+       borderWithLabel (txt "Actions")
+       (center $ drawActions (txt "No Actions") areaPerformedActions))
+drawWorkingArea AreaAlertMsg{..}
   = (Just (renderDialog (dialog (Just "Alert") Nothing 0) dialogBody), wStatus)
   where
     wStatus = hCenter $ txt "Alert message popped"
-    dialogBody = drawLog alertMsg
-drawWorkingArea NoWork
+    dialogBody = drawLog areaAlertMsg
+drawWorkingArea AreaNoWork
   = (Nothing, hCenter $ txt "Nothing to be done")

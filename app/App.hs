@@ -67,7 +67,7 @@ runStateBackupWorker outputPath stateUpdChan msgChan = forever $ do
   st <- readChan stateUpdChan
 
   B.writeFile (P.encodeString outputPath) (Ser.encode st)
-  Bk.writeBChan msgChan $ SyncStatePersisted st
+  Bk.writeBChan msgChan $ MsgSyncStatePersisted st
 
 runSyncWorker
   :: Time.NominalDiffTime
@@ -78,9 +78,9 @@ runSyncWorker
 runSyncWorker interval msgChan syncEnv syncState0 = do
   result <- SS.runSyncM runM syncEnv syncState0
   case result of
-    Left err -> Bk.writeBChan msgChan $ SyncWorkerDied err
+    Left err -> Bk.writeBChan msgChan $ MsgSyncWorkerDied err
     Right (_, finalState) -> do
-      Bk.writeBChan msgChan . SyncWorkerDied . SS.OtherException . SomeException $
+      Bk.writeBChan msgChan . MsgSyncWorkerDied . SS.OtherException . SomeException $
         userError "Impossible error: worker finished with final state!"
       -- backup just in case
       writeChan (SS.statePushChan syncEnv) finalState
@@ -89,7 +89,7 @@ runSyncWorker interval msgChan syncEnv syncState0 = do
       -- catch error in each run, note this doesn't prevent from IOException
       -- terminating the thread
       oneRun `catchError` \e ->
-        liftIO . Bk.writeBChan msgChan $ SyncWorkerError e
+        liftIO . Bk.writeBChan msgChan $ MsgSyncWorkerError e
         -- ignoring it and continue...
       where
         oneRun = do
@@ -98,11 +98,11 @@ runSyncWorker interval msgChan syncEnv syncState0 = do
           plans <- SS.genSyncPlans
           filteredActions <- liftIO $ do
             respMVar <- newEmptyMVar
-            liftIO . Bk.writeBChan msgChan $ SyncPlansPending plans respMVar
+            liftIO . Bk.writeBChan msgChan $ MsgSyncPlansPending plans respMVar
             takeMVar respMVar
           SS.performSyncActions now filteredActions
           liftIO $ do
-            Bk.writeBChan msgChan $ SyncActionsPerformed filteredActions
+            Bk.writeBChan msgChan $ MsgSyncActionsPerformed plans filteredActions
             -- wait for said time
             threadDelay $ ceiling (interval * 1e6)
 
@@ -166,11 +166,11 @@ applyWaitPerform
   -> [SS.SyncAction']
   -> AppState
   -> m AppState
-applyWaitPerform originalPlans msgMVar performingActions st = do
+applyWaitPerform areaOriginalPlans msgMVar areaPerformingActions st = do
   -- immediately write the results throw to reply and then
-  liftIO $ putMVar msgMVar performingActions
+  liftIO $ putMVar msgMVar areaPerformingActions
   return st
-    { appWorkingArea = SyncPlansWaitPerform{..}
+    { appWorkingArea = AreaSyncPlansWaitPerform{..}
     }
 
 applySyncPlans
@@ -182,14 +182,14 @@ applySyncPlans
 applySyncPlans plans msgMVar st@AppState{appConfig}
   -- apply the default strategy
   | Just (conflictHead, more) <- conflictsMay = return st
-      { appWorkingArea = SyncPlansResolveConflict
-          { originalPlans = sortedPlans
-          , pendingActions = actions
-          , pendingConflicts = more
-          , currentConflict = conflictHead
-          , strategyChoice = Bk.dialog Nothing
+      { appWorkingArea = AreaSyncPlansResolveConflict
+          { areaOriginalPlans = sortedPlans
+          , areaPendingActions = actions
+          , areaPendingConflicts = more
+          , areaCurrentConflict = conflictHead
+          , areaStrategyChoice = Bk.dialog Nothing
                              (Just (0, defaultConflictResolveStrategies)) 80
-          , replyMVar = msgMVar
+          , areaReplyMVar = msgMVar
           }
       }
   | otherwise = applyWaitPerform sortedPlans msgMVar actions st
@@ -206,7 +206,7 @@ applyMsg msg st = Trace.traceShow msg $ do
     { appLogs = appLogs st Seq.|> (now, msg)
     , appWorkingArea = area
     }
-  where area | logLvl msg == Error = AlertMsg msg
+  where area | logLvl msg == Error = AreaAlertMsg msg
              | otherwise           = appWorkingArea st
 
 -- continually execute pending items in the state until stop
@@ -216,22 +216,24 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
   | next Seq.:< rest <- Seq.viewl appMsgQueue =
     let st' = st{ appMsgQueue = rest }
     in processMsgQueue =<< case next of
-      SyncPlansPending plans msgMVar ->
+      MsgSyncPlansPending plans msgMVar ->
         applySyncPlans plans msgMVar st'
-      SyncActionsPerformed actions -> do
+      MsgSyncActionsPerformed plans actions -> do
         now <- liftIO Time.getCurrentTime
         applyMsg (LogMsg Log $ "Synced! Performed "
                    <> (T.pack . show . length $ actions) <> " actions")
           st' { appActionHistory = appActionHistory Seq.><
                                    Seq.fromList ((now,) <$> actions)
-              , appWorkingArea = SyncActionsDone{ doneActions = actions }
+              , appWorkingArea = AreaSyncActionsPerformed
+                                 { areaOriginalPlans = plans
+                                 , areaPerformedActions = actions }
               }
-      SyncStatePersisted _ ->
+      MsgSyncStatePersisted _ ->
         -- ignoring this message for the moment
         return st'
-      SyncWorkerError err ->
+      MsgSyncWorkerError err ->
         flip applyMsg st' . LogMsg Error $ "SyncWorker: " <> T.pack (show err)
-      SyncWorkerDied err ->
+      MsgSyncWorkerDied err ->
         flip applyMsg st' . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
   | otherwise = return st -- no more messages!
 
@@ -240,37 +242,37 @@ handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
 -- global events are handled first
 handleVtyEvent st (V.EvKey (V.KChar 'q') []) = Bk.halt st
 handleVtyEvent st@AppState{appWorkingArea} evt = case appWorkingArea of
-  NoWork -> Bk.continue st
-  SyncPlansResolveConflict{ strategyChoice, .. }
+  AreaNoWork -> Bk.continue st
+  AreaSyncPlansResolveConflict{ areaStrategyChoice, .. }
     | V.EvKey V.KEnter [] <- evt
-    , Just strat <- Bk.dialogSelection strategyChoice ->
-      case SStrat.applyStrategy strat (Left currentConflict) of
+    , Just strat <- Bk.dialogSelection areaStrategyChoice ->
+      case SStrat.applyStrategy strat (Left areaCurrentConflict) of
         Just (Right act) -> handleAct (Just act)
         Just (Left conflict') -> Bk.continue $ st
           { appWorkingArea = appWorkingArea
-            { currentConflict = conflict' }
+            { areaCurrentConflict = conflict' }
           }
         -- conflict is ignored
         Nothing -> handleAct Nothing
     | otherwise -> do
-        d' <- Bk.handleDialogEvent evt strategyChoice
-        Bk.continue st{ appWorkingArea = appWorkingArea{ strategyChoice = d' } }
+        d' <- Bk.handleDialogEvent evt areaStrategyChoice
+        Bk.continue st{ appWorkingArea = appWorkingArea{ areaStrategyChoice = d' } }
       where
         handleAct actMay
-          | conflict':more' <- pendingConflicts = Bk.continue st
+          | conflict':more' <- areaPendingConflicts = Bk.continue st
             { appWorkingArea = appWorkingArea
-              { pendingActions = acts'
-              , pendingConflicts = more'
-              , currentConflict = conflict'
+              { areaPendingActions = acts'
+              , areaPendingConflicts = more'
+              , areaCurrentConflict = conflict'
               }
             }
-          | otherwise = applyWaitPerform originalPlans replyMVar acts' st
+          | otherwise = applyWaitPerform areaOriginalPlans areaReplyMVar acts' st
                     >>= Bk.continue
-          where acts' = pendingActions++maybeToList actMay
+          where acts' = areaPendingActions++maybeToList actMay
 
-  AlertMsg{} -> case evt of
+  AreaAlertMsg{} -> case evt of
       -- dismiss working area
-      V.EvKey V.KEnter [] -> Bk.continue st{ appWorkingArea = NoWork }
+      V.EvKey V.KEnter [] -> Bk.continue st{ appWorkingArea = AreaNoWork }
       _ -> Bk.continue st
 
   _ -> Bk.continue st

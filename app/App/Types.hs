@@ -48,57 +48,59 @@ data LogMsg = LogMsg
 
 type Name = ()
 
-data AppWorkingArea = SyncPlansResolveConflict
-                      { originalPlans    :: [SS.SyncPlan']
-                      , pendingActions   :: [SS.SyncAction']
-                      , pendingConflicts :: [SS.SyncConflict']
+data AppWorkingArea = AreaSyncPlansResolveConflict
+                      { areaOriginalPlans    :: [SS.SyncPlan']
+                      , areaPendingActions   :: [SS.SyncAction']
+                      , areaPendingConflicts :: [SS.SyncConflict']
 
-                      , currentConflict  :: SS.SyncConflict'
+                      , areaCurrentConflict  :: SS.SyncConflict'
                       -- ^ the current conflict to resolve with user
-                      , strategyChoice   :: Bk.Dialog SStrat.SyncStrategy
+                      , areaStrategyChoice   :: Bk.Dialog SStrat.SyncStrategy
                       -- ^ user options to resolve the conflict
-                      , replyMVar        :: MVar [SS.SyncAction']
+                      , areaReplyMVar        :: MVar [SS.SyncAction']
                       }
-                    | SyncPlansWaitPerform
-                      { originalPlans     :: [SS.SyncPlan']
-                      , performingActions :: [SS.SyncAction']
+                    | AreaSyncPlansWaitPerform
+                      { areaOriginalPlans     :: [SS.SyncPlan']
+                      , areaPerformingActions :: [SS.SyncAction']
                       }
-                    | SyncActionsDone
-                      { doneActions :: [SS.SyncAction']
+                    | AreaSyncActionsPerformed
+                      { areaOriginalPlans    :: [SS.SyncPlan']
+                      , areaPerformedActions :: [SS.SyncAction']
                       }
-                    | AlertMsg
-                      { alertMsg :: LogMsg
+                    | AreaAlertMsg
+                      { areaAlertMsg :: LogMsg
                       }
-                    | NoWork -- nothing outstanding
+                    | AreaNoWork -- nothing outstanding
 
 instance Monoid AppWorkingArea where
-  mempty = NoWork
-  a `mappend` NoWork = a
-  NoWork `mappend` a = a
+  mempty = AreaNoWork
+  a `mappend` AreaNoWork = a
+  AreaNoWork `mappend` a = a
   x `mappend` _ = x
 
 -- | Determines whether the working area can be open for use on new task
 areaLockedToCurrentWork :: AppWorkingArea -> Bool
-areaLockedToCurrentWork NoWork = False
-areaLockedToCurrentWork SyncPlansWaitPerform{} = False
-areaLockedToCurrentWork SyncActionsDone{} = False
-areaLockedToCurrentWork AlertMsg{} = True
-areaLockedToCurrentWork SyncPlansResolveConflict{} = True
+areaLockedToCurrentWork AreaNoWork = False
+areaLockedToCurrentWork AreaSyncPlansWaitPerform{} = False
+areaLockedToCurrentWork AreaSyncActionsPerformed{} = False
+areaLockedToCurrentWork AreaAlertMsg{} = True
+areaLockedToCurrentWork AreaSyncPlansResolveConflict{} = True
 
-data AppMsg = SyncPlansPending
-              { pendingPlans :: [SS.SyncPlan']
-              , msgMVar      :: MVar [SS.SyncAction']
+data AppMsg = MsgSyncPlansPending
+              { msgPendingPlans :: [SS.SyncPlan']
+              , msgMVar         :: MVar [SS.SyncAction']
               -- ^ where transformed actions are written to
               }
-            | SyncActionsPerformed
-              { performedActions :: [SS.SyncAction']
+            | MsgSyncActionsPerformed
+              { msgOriginalPlans    :: [SS.SyncPlan']
+              , msgPerformedActions :: [SS.SyncAction']
               }
-            | SyncStatePersisted
-              { newSyncState :: SS.SyncState
+            | MsgSyncStatePersisted
+              { msgNewSyncState :: SS.SyncState
               }
-            | SyncWorkerError
-              { syncWorkerError :: SS.SyncError
+            | MsgSyncWorkerError
+              { msgSyncWorkerError :: SS.SyncError
               }
-            | SyncWorkerDied
-              { syncWorkerError :: SS.SyncError
+            | MsgSyncWorkerDied
+              { msgSyncWorkerError :: SS.SyncError
               }
