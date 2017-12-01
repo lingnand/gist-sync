@@ -15,6 +15,7 @@ module SyncStrategy
   , customRewrite
   , customFilter
 
+  , acceptAll
   , dropAll
   , localOnly
   , remoteOnly
@@ -90,6 +91,9 @@ customFilter :: (forall a. S.SyncPlan a -> Bool) -> SyncStrategy
 customFilter f = SyncStrategy $ \x -> guard (f x) >> pure x
 
 ---- Filters
+acceptAll :: SyncStrategy
+acceptAll = mempty
+
 dropAll :: SyncStrategy
 dropAll = SyncStrategy $ const Nothing
 
@@ -184,7 +188,8 @@ useNewerForConflict = SyncStrategy mapper
 -- parser for SyncStrategy
 syncStrategyTable :: [(String, SyncStrategy)]
 syncStrategyTable =
-  [ ("dropAll", dropAll)
+  [ ("acceptAll", acceptAll)
+  , ("dropAll", dropAll)
   , ("localOnly", localOnly)
   , ("remoteOnly", remoteOnly)
   , ("createLocal", createLocal)
