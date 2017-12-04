@@ -13,7 +13,6 @@ import           Control.Applicative
 import           Control.Concurrent
 import           Control.Monad
 import           Data.Default
-import           Data.Maybe
 import           Data.Semigroup
 import           Data.Vinyl (Rec(..), (<<*>>), rget, rcast, rtraverse)
 import qualified Filesystem.Path.CurrentOS as P
@@ -86,8 +85,9 @@ runApp :: IO ()
 runApp =  do
   opts <- Ttl.options "The Gist synchronization client" cliOptsParser
   confFromFile <- either (return . const def)
-     (\(Attr f) -> fromMaybe (error $ "Cannot load config file "++show f)
-            <$> App.appConfigFromYaml f)
+     (\(Attr f) ->
+        either (error . (("Cannot load config file "++show f++": ")++) . show) id
+        <$> App.appConfigFromYaml f)
      (getCompose $ rget SConfigPathL opts)
   conf <- either (fail . ("Config error: "++)) return
         . rtraverse getCompose $ rcast opts

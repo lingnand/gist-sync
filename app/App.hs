@@ -35,6 +35,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Serialize as Ser
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
+import qualified Data.Time.Format as Time
 import qualified Data.Yaml as Y
 import qualified Debug.Trace as Trace
 import qualified Filesystem.Path.CurrentOS as P
@@ -113,8 +114,8 @@ defaultSyncPathMapper syncDir = S.pathMapper pathToId idToPath
 
 appConfigFromYaml
   :: Alternative f
-  => P.FilePath -> IO (Maybe (PartialAppConfig f))
-appConfigFromYaml = Y.decodeFile . P.encodeString
+  => P.FilePath -> IO (Either Y.ParseException (PartialAppConfig f))
+appConfigFromYaml = Y.decodeFileEither . P.encodeString
 
 -- | init the various env/states
 initStates
@@ -201,9 +202,9 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
     conflictsMay = uncons $ lefts plans'
 
 applyMsg :: MonadIO m => LogMsg -> AppState -> m AppState
-applyMsg msg st = Trace.traceShow msg $ do
+applyMsg msg st = do
   now <- liftIO Time.getCurrentTime
-  return st
+  return $ traceShowWithT now msg $ st
     { appLogs = appLogs st Seq.|> (now, msg)
     , appWorkingArea = area
     }
@@ -221,13 +222,16 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
         applySyncPlans plans msgMVar st'
       MsgSyncActionsPerformed plans actions -> do
         now <- liftIO Time.getCurrentTime
-        applyMsg (LogMsg Log $ "Synced! Performed "
-                   <> (T.pack . show . length $ actions) <> " actions")
+        let tracer | null actions = id
+                   | otherwise = traceShowWithT now actions
+        tracer$ applyMsg
+          (LogMsg Log $ "Synced! Performed "
+           <> (T.pack . show . length $ actions) <> " actions")
           st' { appActionHistory = appActionHistory Seq.><
-                                   Seq.fromList ((now,) <$> actions)
+                                  Seq.fromList ((now,) <$> actions)
               , appWorkingArea = AreaSyncActionsPerformed
-                                 { areaOriginalPlans = plans
-                                 , areaPerformedActions = actions }
+                                { areaOriginalPlans = plans
+                                , areaPerformedActions = actions }
               }
       MsgSyncStatePersisted _ ->
         -- ignoring this message for the moment
@@ -286,3 +290,9 @@ handleEvent st (Bk.VtyEvent evt)
 handleEvent st _
   -- ignore mouse events
   = Bk.continue st
+
+-- debug
+
+traceShowWithT :: Show a => Time.UTCTime -> a -> b -> b
+traceShowWithT t i = Trace.trace (fmtT++" "++show i)
+  where fmtT = Time.formatTime Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S" t

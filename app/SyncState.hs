@@ -33,7 +33,7 @@ import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Crypto.Hash as H
-import           Data.Bifunctor (bimap)
+import           Data.Bifunctor (first)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
@@ -77,7 +77,7 @@ runSyncM
   -> SyncState
   -> IO (Either SyncError (a, SyncState))
 runSyncM m env@SyncEnv{githubToken=token, manager=mgr, githubHost=host} state = do
-  a <- (bimap ServantError id <$> run m) `catch` (return . Left . OtherException)
+  a <- (first ServantError <$> run m) `catch` (return . Left . OtherException)
   return $ join a
   where run = flip runClientM (ClientEnv mgr host)
             . flip G.runGitHub' (Just token)

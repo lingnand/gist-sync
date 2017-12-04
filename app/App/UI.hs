@@ -154,8 +154,6 @@ drawComparisonPanes :: (T.Text, Widget n) -> (T.Text, Widget n) -> Widget n
 drawComparisonPanes (upLabel, up) (downLabel, down) =
   borderWithLabel (txt upLabel) (center up)
   <=>
-  hBorder
-  <=>
   borderWithLabel (txt downLabel) (center down)
 
 -- | draw working area as (Maybe a top layer, status layer)
@@ -192,9 +190,9 @@ drawWorkingArea AreaSyncActionsPerformed{..}
       ("Original", drawPlans (txt "No Plans") areaOriginalPlans)
       ("Actions", drawActions (txt "No Actions") areaPerformedActions)
 drawWorkingArea AreaAlertMsg{..}
-  = (Just (renderDialog (dialog (Just "Alert") Nothing 0) dialogBody), wStatus)
+  = (Just (renderDialog (dialog (Just "Alert") Nothing 80) dialogBody), wStatus)
   where
     wStatus = hCenter $ txt "Alert message popped"
-    dialogBody = drawLog areaAlertMsg
+    dialogBody = hCenter . padAll textPad $ drawLog areaAlertMsg
 drawWorkingArea AreaNoWork
   = (Nothing, hCenter $ txt "Nothing to be done")
