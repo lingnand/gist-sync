@@ -21,7 +21,7 @@ import qualified Data.Time.Clock as Time
 import qualified SyncState as SS
 import qualified SyncStrategy as SStrat
 
-import           App.Types.Config
+import App.Types.Config
 
 -- | the UI state
 type Timestamped a = (Time.UTCTime, a)

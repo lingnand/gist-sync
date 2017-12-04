@@ -67,6 +67,10 @@ executable gist-sync
                      , memory
                      , transformers
                      , optparse-applicative
+                     , vinyl
+                     , data-default
+                     , newtype
+                     , semigroups
   default-language:    Haskell2010
 
   ghc-options:         -Wall -threaded -stubdir cbits -fdefer-typed-holes

@@ -113,7 +113,7 @@ defaultSyncPathMapper syncDir = S.pathMapper pathToId idToPath
 
 appConfigFromYaml
   :: Alternative f
-  => P.FilePath -> IO (Maybe (AppConfig' f))
+  => P.FilePath -> IO (Maybe (PartialAppConfig f))
 appConfigFromYaml = Y.decodeFile . P.encodeString
 
 -- | init the various env/states
@@ -127,11 +127,12 @@ initStates sStateChan conf = do
   let syncEnv = SS.SyncEnv
         { statePushChan = sStateChan
         , manager = mgr
-        , githubHost = githubHost conf
-        , githubToken = githubToken conf
-        , syncDir = syncDir conf
-        , syncPathMapper = defaultSyncPathMapper (syncDir conf)
+        , githubHost = rattr SGitHubHostL conf
+        , githubToken = rattr SGitHubTokenL conf
+        , syncDir = syncDir
+        , syncPathMapper = defaultSyncPathMapper syncDir
         }
+        where syncDir = rattr SSyncDirL conf
   syncState0 <- decodeState `catch` \(e :: SomeException) -> do
     hPutStrLn stderr $
       "Unable to load sync state, err: " ++ show e
@@ -141,7 +142,7 @@ initStates sStateChan conf = do
   return ((syncEnv, syncState0), appState)
   where
     decodeState = do
-      bs <- B.readFile (P.encodeString $ syncStateStorage conf)
+      bs <- B.readFile (P.encodeString $ rattr SSyncStateStorageL conf)
       either fail return (Ser.decode bs)
     appState = AppState
       { appConfig = conf
@@ -195,7 +196,7 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
   | otherwise = applyWaitPerform sortedPlans msgMVar actions st
   where
     sortedPlans = sort plans
-    plans' = SStrat.applyStrategyToList (valueOf $ syncStrategy appConfig) sortedPlans
+    plans' = SStrat.applyStrategyToList (valueOf $ rattr SSyncStrategyL appConfig) sortedPlans
     actions = rights plans'
     conflictsMay = uncons $ lefts plans'
 

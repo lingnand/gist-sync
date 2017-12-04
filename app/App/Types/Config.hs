@@ -1,47 +1,83 @@
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
 module App.Types.Config
   (
     RunMode(..)
   , Named(..)
-  , AppConfig'(..)
+
+  , SyncStateStorageL
+  , GitHubHostL
+  , GitHubTokenL
+  , SyncDirL
+  , SyncIntervalL
+  , SyncStrategyL
+  , RunModeL
+
+  , SLabel(..)
+  , Attr'
+  , Attr(..)
+  , (=:)
+  , rattr
+
+  , ConfLabels
+
   , AppConfig
-  , syncStateStorage
-  , githubHost
-  , githubToken
-  , syncDir
-  , syncInterval
-  , syncStrategy
-  , runMode
-  , hoistConfig
-  , evalConfig'
-  , evalConfig
-  , Parser(runParser)
-  , hoistParser
+  , PartialAppConfig
+
+  , ParserInput'
+  , ParserInput(..)
+
   , configParser
-  , defConfig
   ) where
 
 import           Control.Applicative
 import           Control.Monad.Except
-import           Data.Aeson
+import           Data.Aeson (FromJSON, (.:?))
+import qualified Data.Aeson.Types as A
 import           Data.Char
-import           Data.Functor.Compose
-import           Data.Functor.Identity
+import           Data.Default
 import           Data.String
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
+import           Data.Vinyl (Rec(..), (<<*>>), (<<$>>), rtraverse, rget, RElem)
+import           Data.Vinyl.Functor (Lift(..))
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Network.GitHub as G
 import qualified Servant.Client as Servant
 import qualified SyncStrategy as SStrat
 import           Text.Read (readEither)
+import           Utils (Compose(..), (:.))
+import qualified Utils as U
+
+-- declaring labels of kind * to allow easy extension
+data SyncStateStorageL
+data GitHubHostL
+data GitHubTokenL
+data SyncDirL
+data SyncIntervalL
+data SyncStrategyL
+data RunModeL
+
+-- hand-rolled singleton mirrors
+data family SLabel a
+data instance SLabel SyncStateStorageL = SSyncStateStorageL
+data instance SLabel GitHubHostL       = SGitHubHostL
+data instance SLabel GitHubTokenL      = SGitHubTokenL
+data instance SLabel SyncDirL          = SSyncDirL
+data instance SLabel SyncIntervalL     = SSyncIntervalL
+data instance SLabel SyncStrategyL     = SSyncStrategyL
+data instance SLabel RunModeL          = SRunModeL
 
 data RunMode = Normal | Dry
   deriving (Show, Read, Eq, Enum, Bounded)
@@ -52,135 +88,120 @@ data Named a = Named
   , valueOf :: a
   }
 
-data AppConfig' f = AppConfig'
-  { _syncStateStorage :: f P.FilePath
-  -- ^ path to a file that is used to read/write sync state
-  -- copied from SyncEnv
-  , _githubHost       :: f Servant.BaseUrl
-  , _githubToken      :: f G.AuthToken
-  , _syncDir          :: f P.FilePath
-  , _syncInterval     :: f Time.NominalDiffTime
-  , _syncStrategy     :: f (Named SStrat.SyncStrategy)
-  -- ^ strategy to apply after each sync
+-- Attr type family and newtype wrapper
+-- NOTE: we are using type family instead of GADT to hold the data fields
+-- directly because of the convenience this has over GADT on unpacking the data
+-- using accessor
+type family Attr' a
+type instance Attr' SyncStateStorageL = P.FilePath
+type instance Attr' GitHubHostL       = Servant.BaseUrl
+type instance Attr' GitHubTokenL      = G.AuthToken
+type instance Attr' SyncDirL          = P.FilePath
+type instance Attr' SyncIntervalL     = Time.NominalDiffTime
+type instance Attr' SyncStrategyL     = Named SStrat.SyncStrategy
+type instance Attr' RunModeL          = RunMode
+newtype Attr a = Attr { unAttr :: Attr' a }
+infixl 8 =:
+(=:) :: sing a -> Attr' a -> Attr a
+_ =: x = Attr x
 
-  -- debug
-  , _runMode          :: f RunMode
-  }
+rattr :: RElem u us i => sing u -> Rec Attr us -> Attr' u
+rattr s = unAttr . rget s
 
-type AppConfig = AppConfig' Identity
+instance Show (Attr SyncStateStorageL) where
+  show (Attr p) = "syncStateStorage = "++show p
+instance Show (Attr GitHubHostL) where
+  show (Attr h) = "githubHost = "++show h
+instance Show (Attr GitHubTokenL) where
+  show (Attr _) = "githubToken = <token>"
+instance Show (Attr SyncDirL) where
+  show (Attr d) = "syncDir = "++show d
+instance Show (Attr SyncIntervalL) where
+  show (Attr i) = "syncInterval = "++show i
+instance Show (Attr SyncStrategyL) where
+  show (Attr s) = "syncStrategy = "++T.unpack (nameOf s)
+instance Show (Attr RunModeL) where
+  show (Attr m) = "runMode = "++show m
 
--- | A Monoid implementation that merges values for individual fields
-instance Alternative f => Monoid (AppConfig' f) where
-  mempty = AppConfig'
-    { _syncStateStorage  = empty
-    , _githubHost        = empty
-    , _githubToken       = empty
-    , _syncDir           = empty
-    , _syncInterval      = empty
-    , _syncStrategy      = empty
-    , _runMode           = empty
-    }
-  c1 `mappend` c2 = AppConfig'
-    { _syncStateStorage  = _syncStateStorage c1 <|> _syncStateStorage c2
-    , _githubHost        = _githubHost c1 <|> _githubHost c2
-    , _githubToken       = _githubToken c1 <|> _githubToken c2
-    , _syncDir           = _syncDir c1 <|> _syncDir c2
-    , _syncInterval      = _syncInterval c1 <|> _syncInterval c2
-    , _syncStrategy      = _syncStrategy c1 <|> _syncStrategy c2
-    , _runMode           = _runMode c1 <|> _runMode c2
-    }
+type ConfLabels = '[ SyncStateStorageL
+                   , GitHubHostL
+                   , GitHubTokenL
+                   , SyncDirL
+                   , SyncIntervalL
+                   , SyncStrategyL
+                   , RunModeL
+                   ]
 
-syncStateStorage :: AppConfig -> P.FilePath
-syncStateStorage = runIdentity . _syncStateStorage
-githubHost :: AppConfig -> Servant.BaseUrl
-githubHost = runIdentity . _githubHost
-githubToken :: AppConfig -> G.AuthToken
-githubToken = runIdentity . _githubToken
-syncDir :: AppConfig -> P.FilePath
-syncDir = runIdentity . _syncDir
-syncInterval :: AppConfig -> Time.NominalDiffTime
-syncInterval = runIdentity . _syncInterval
-syncStrategy :: AppConfig -> Named SStrat.SyncStrategy
-syncStrategy = runIdentity . _syncStrategy
-runMode :: AppConfig -> RunMode
-runMode = runIdentity . _runMode
+type AppConfig = Rec Attr ConfLabels
+type PartialAppConfig f = Rec (f :. Attr) ConfLabels
 
-hoistConfig :: (forall a. f a -> g a) -> AppConfig' f -> AppConfig' g
-hoistConfig f = runIdentity . evalConfig' (Identity . f)
-
-evalConfig'
-  :: Applicative g
-  => (forall a. f a -> g (h a))
-  -> AppConfig' f -> g (AppConfig' h)
-evalConfig' f AppConfig'{..} = AppConfig'
-  <$> f _syncStateStorage
-  <*> f _githubHost
-  <*> f _githubToken
-  <*> f _syncDir
-  <*> f _syncInterval
-  <*> f _syncStrategy
-  <*> f _runMode
-
-evalConfig :: Applicative f => AppConfig' f -> f AppConfig
-evalConfig = evalConfig' (fmap pure)
-
-type family ParserInput a :: * where
-  ParserInput P.FilePath = T.Text
-  ParserInput Servant.BaseUrl = String
-  ParserInput G.AuthToken = String
-  ParserInput Time.NominalDiffTime = Double
-  ParserInput (Named SStrat.SyncStrategy) = String
-  ParserInput RunMode = String
-
-newtype Parser f a = Parser{ runParser :: ParserInput a -> f a }
-
-hoistParser :: (f a -> g a) -> Parser f a -> Parser g a
-hoistParser f (Parser x) = Parser $ f . x
+-- type family to compute parser input type + wrapper around it
+type family ParserInput' a
+type instance ParserInput' SyncStateStorageL = T.Text
+type instance ParserInput' GitHubHostL       = String
+type instance ParserInput' GitHubTokenL      = String
+type instance ParserInput' SyncDirL          = T.Text
+type instance ParserInput' SyncIntervalL     = Double
+type instance ParserInput' SyncStrategyL     = String
+type instance ParserInput' RunModeL          = String
+newtype ParserInput a = ParserInput { unParserInput :: ParserInput' a }
 
 configParser
-  :: MonadError String f
-  => AppConfig' (Parser f)
-configParser = AppConfig'
-  { _syncStateStorage = Parser $ pure . P.fromText
-  , _githubHost       = Parser $ either (throwError . show) pure
-                               . Servant.parseBaseUrl
-  , _githubToken      = Parser $ pure . fromString
-  , _syncDir          = Parser $ pure . P.fromText
-  , _syncInterval     = Parser $ pure . realToFrac
-  , _syncStrategy     = Parser $ \str ->
-                          either (throwError . show) (pure . Named (T.pack str))
-                        . SStrat.parseStrategy $ str
-  , _runMode          = Parser $ either throwError pure . tryCases
-  }
+  :: Monad f -- MonadFail in later ghc
+  => Rec (Lift (->) ParserInput (f :. Attr)) ConfLabels
+configParser =
+     up ( pure . (SSyncStateStorageL =:) . P.fromText )
+  :& up ( either (fail . show)
+            (pure . (SGitHubHostL =:))
+          . Servant.parseBaseUrl )
+  :& up (pure . (SGitHubTokenL =:) . fromString)
+  :& up (pure . (SSyncDirL =:) . P.fromText)
+  :& up (pure . (SSyncIntervalL =:) . realToFrac)
+  :& up (\str ->
+            either (fail . show)
+            (pure . (SSyncStrategyL =:) . Named (T.pack str))
+            (SStrat.parseStrategy str))
+  :& up (either fail (pure . (SRunModeL =:)) . tryCases)
+  :& RNil
   where
-    tryCases [] = throwError "Cannot parse empty string"
+    up f = Lift $ Compose . f . unParserInput
+    tryCases [] = Left "Cannot parse empty string"
     tryCases s@(x:xs) = readEither s <|> readEither (toUpper x:xs)
 
-defConfig
-  :: MonadError String f
-  => AppConfig' f
-defConfig = AppConfig'
-  { _syncStateStorage = throwError "No sync state storage specified"
-  , _githubHost       = pure $ Servant.BaseUrl Servant.Https "api.github.com" 443 ""
-  , _githubToken      = throwError "No github token specified"
-  , _syncDir          = throwError "No sync dir specified"
-  , _syncInterval     = throwError "No sync interval specified"
-  , _syncStrategy     = throwError "No sync strategy specified"
-  , _runMode          = pure Normal
-  }
+instance MonadError String f => Default (PartialAppConfig f) where
+  def =
+       up (throwError "No sync state storage specified")
+    :& up (pure $ SGitHubHostL =: Servant.BaseUrl Servant.Https "api.github.com" 443 "")
+    :& up (throwError "No github token specified")
+    :& up (throwError "No sync dir specified")
+    :& up (throwError "No sync interval specified")
+    :& up (throwError "No sync strategy specified")
+    :& up (pure $ SRunModeL =: Normal)
+    :& RNil
+    where up = Compose
 
-instance Alternative f => FromJSON (AppConfig' f) where
-  parseJSON (Object v) = evalConfig' getCompose parse
-    where AppConfig'{..} = configParser
-          conv p = either fail return . runParser p
-          up x = Compose (pure <$> x <|> pure empty)
-          parse = AppConfig'
-            { _syncStateStorage = up $ v .: "sync-state-storage" >>= conv _syncStateStorage
-            , _githubHost       = up $ v .: "github-host" >>= conv _githubHost
-            , _githubToken      = up $ v .: "github-token" >>= conv _githubToken
-            , _syncDir          = up $ v .: "sync-dir" >>= conv _syncDir
-            , _syncInterval     = up $ v .: "sync-interval" >>= conv _syncInterval
-            , _syncStrategy     = up $ v .: "sync-strategy" >>= conv _syncStrategy
-            , _runMode          = up $ v .: "run-mode" >>= conv _runMode
-            }
+instance Alternative f => FromJSON (PartialAppConfig f) where
+  parseJSON (A.Object v) = do
+    -- first get all the parser input from json (allowing partial input)
+    inputs <- rtraverse getCompose $
+           up (v .:? "sync-state-storage")
+        :& up (v .:? "github-host")
+        :& up (v .:? "github-token")
+        :& up (v .:? "sync-dir")
+        :& up (v .:? "sync-interval")
+        :& up (v .:? "sync-strategy")
+        :& up (v .:? "run-mode" )
+        :& RNil
+    let applied :: Rec (Maybe :. A.Parser :. Attr) ConfLabels
+        applied = U.fmapLift <<$>> configParser <<*>> inputs
+        -- shift Maybe into f
+        eval :: (Maybe :. A.Parser :. Attr) a -> A.Parser ((f :. Attr) a)
+        eval = on . getCompose
+          where
+            on Nothing = pure (Compose empty) -- unspecified field
+            on (Just parse) = Compose . pure <$> getCompose parse
+    -- this step will catch all the parser error right here
+    rtraverse eval applied
+    where
+      up parser = Compose $ Compose . fmap ParserInput <$> parser
   parseJSON _ = empty
