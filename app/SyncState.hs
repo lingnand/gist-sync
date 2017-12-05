@@ -50,6 +50,7 @@ import           GHC.Generics
 import qualified Network.GitHub as G
 import qualified Network.GitHub.Gist.Sync as S
 import qualified Network.GitHub.Types.Gist.Edit as GE
+import qualified Network.GitHub.Types.Gist.Create as GC
 import qualified Network.HTTP.Client as HTTP
 import           Servant.Client (ServantError, BaseUrl, runClientM, ClientEnv(..))
 import qualified Turtle as Ttl
@@ -179,9 +180,9 @@ performSyncActions time acts = do
     handle x@S.CreateLocal{} =
       write (S.localFilePath x) (S.remoteFileURL x) (S.remoteGistFileId x)
     handle x@S.UpdateRemote{} =
-      upload (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
+      upload False (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
     handle x@S.CreateRemote{} =
-      upload (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
+      upload True (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
     write :: P.FilePath -> T.Text -> S.GistFileId -> SyncM SyncFile'
     write f url gfid = do
       mgr <- asks manager
@@ -196,14 +197,23 @@ performSyncActions time acts = do
           , S.syncFileHash = H.hash (BL.toStrict content)
           , S.syncFileTime = time
           }
-    upload :: P.FilePath -> S.LocalFileInfo H.MD5 -> S.GistFileId -> SyncM SyncFile'
-    upload f S.LocalFileInfo{S.localFileHash} gfid@(gid,fid) = do
+    upload
+      :: Bool
+      -> P.FilePath
+      -> S.LocalFileInfo H.MD5
+      -> S.GistFileId
+      -> SyncM SyncFile'
+    upload isNew f S.LocalFileInfo{S.localFileHash} gfid@(gid,fid) = do
       -- XXX: avoid reading file repeatedly?
       newContent <- liftIO . T.readFile $ P.encodeString f
-      _ <- liftGitHub $ G.editGist gid (GE.editFile fid mempty{ GE.content = Just newContent })
+      _ <- liftGitHub $ api newContent
       return S.SyncFile
         { S.syncFilePath = f
         , S.syncGistFileId = gfid
         , S.syncFileHash = localFileHash
         , S.syncFileTime = time
         }
+      where
+        api content
+          | isNew = G.createGist $ GC.createFile fid mempty{ GC.content = content }
+          | otherwise = G.editGist gid $ GE.editFile fid mempty{ GE.content = Just content }
