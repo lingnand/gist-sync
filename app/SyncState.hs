@@ -121,6 +121,7 @@ instance H.HashAlgorithm a => Ser.Serialize (H.Digest a) where
 deriving instance Generic (S.SyncFile a)
 instance H.HashAlgorithm a => Ser.Serialize (S.SyncFile a)
 
+-- TODO: validate its consistency on program start (when decoded from disk)
 newtype SyncState = SyncState
   { syncFiles :: M.Map P.FilePath SyncFile'
   } deriving (Show, Eq, Generic)
