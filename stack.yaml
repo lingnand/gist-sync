@@ -1,34 +1,41 @@
-resolver: lts-3.22
+resolver: lts-9.11
 
 packages:
 - '.'
 - location: ../servant-github
   extra-dep: true
+- location: ../vinyl
+  extra-dep: true
 
 extra-deps:
-- http-link-header-1.0.3
-- jose-0.6.0.3
-- concise-0.1.0.0
-- monad-time-0.2
-- cryptonite-0.11
-- memory-0.8
-- servant-0.10
-- servant-client-0.10
-- http-api-data-0.3
-- base-compat-0.9.1
-- natural-transformation-0.4
-- turtle-1.4.4
-- managed-1.0.5
-- optparse-applicative-0.14.0.0
-- fail-4.9.0.0
-- brick-0.27
-- data-clist-0.1.2.0
-- text-zipper-0.10.1
-- vty-5.18.1
+# - http-link-header-1.0.3
+# - jose-0.6.0.3
+# - concise-0.1.0.0
+# - monad-time-0.2
+# - cryptonite-0.11
+# - memory-0.8
+# - servant-0.10
+# - servant-client-0.10
+# - http-api-data-0.3
+# - base-compat-0.9.1
+# - natural-transformation-0.4
+# - turtle-1.4.4
+# - managed-1.0.5
+# - optparse-applicative-0.14.0.0
+# - fail-4.9.0.0
+- vty-5.19
+- megaparsec-6.2.0
+- brick-0.29.1
+- config-ini-0.2.1.1
 - word-wrap-0.4.1
-- microlens-0.3.5.1
-- vinyl-0.6.0
+- optparse-applicative-0.14.0.0
+# - data-clist-0.1.2.0
+# - text-zipper-0.10.1
+# - vty-5.18.1
+# - word-wrap-0.4.1
+# - microlens-0.3.5.1
+# - vinyl-0.6.0
 
-flags:
+# flags:
 
-extra-package-dbs: []
+# extra-package-dbs: []

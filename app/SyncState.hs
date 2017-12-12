@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -176,20 +177,27 @@ performSyncActions time acts = do
   newSFiles <- mapM handle acts
   modify $ \st -> st{ syncFiles = foldr (\f -> M.insert (S.syncFilePath f) f) (syncFiles st) newSFiles  }
   where
-    handle x@S.UpdateLocal{} =
-      write (S.localFilePath x) (S.remoteFileURL x) (S.remoteGistFileId x)
-    handle x@S.CreateLocal{} =
-      write (S.localFilePath x) (S.remoteFileURL x) (S.remoteGistFileId x)
-    handle x@S.UpdateRemote{} =
-      upload False (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
-    handle x@S.CreateRemote{} =
-      upload True (S.localFilePath x) (S.localFileInfo x) (S.remoteGistFileId x)
+    handle S.UpdateLocal{..} =
+      write localFilePath remoteFileURL remoteGistFileId
+    handle S.CreateLocal{..} =
+      write localFilePath remoteFileURL remoteGistFileId
+    handle S.UpdateRemote{..} =
+      upload localFilePath localFileInfo $ \content -> do
+        let gfid@(gid,fid) = remoteGistFileId
+        _ <- G.editGist gid $ GE.editFile fid mempty{ GE.content = Just content }
+        return gfid
+    handle S.CreateRemote{..} =
+      -- FIXME: once you created remote, remote timestamp is updated, so you
+      -- immediately write to local again..? what..
+      upload localFilePath localFileInfo $ \content -> do
+        g <- G.createGist $ GC.createFile remoteFileId mempty{ GC.content = content }
+        return (G.id g, remoteFileId)
     write :: P.FilePath -> T.Text -> S.GistFileId -> SyncM SyncFile'
     write f url gfid = do
       mgr <- asks manager
       -- XXX: more efficient to set up a pipe to dump to file directly
       liftIO $ do
-        req <- HTTP.parseUrl (T.unpack url)
+        req <- HTTP.parseRequest (T.unpack url)
         content <- HTTP.responseBody <$> HTTP.httpLbs req mgr
         BL.writeFile (P.encodeString f) content
         return S.SyncFile
@@ -199,22 +207,17 @@ performSyncActions time acts = do
           , S.syncFileTime = time
           }
     upload
-      :: Bool
-      -> P.FilePath
+      :: P.FilePath
       -> S.LocalFileInfo H.MD5
-      -> S.GistFileId
+      -> (T.Text -> G.GitHub S.GistFileId)
       -> SyncM SyncFile'
-    upload isNew f S.LocalFileInfo{S.localFileHash} gfid@(gid,fid) = do
+    upload f S.LocalFileInfo{S.localFileHash} api = do
       -- XXX: avoid reading file repeatedly?
       newContent <- liftIO . T.readFile $ P.encodeString f
-      _ <- liftGitHub $ api newContent
+      gfid <- liftGitHub $ api newContent
       return S.SyncFile
         { S.syncFilePath = f
         , S.syncGistFileId = gfid
         , S.syncFileHash = localFileHash
         , S.syncFileTime = time
         }
-      where
-        api content
-          | isNew = G.createGist $ GC.createFile fid mempty{ GC.content = content }
-          | otherwise = G.editGist gid $ GE.editFile fid mempty{ GE.content = Just content }

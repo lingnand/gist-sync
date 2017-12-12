@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DataKinds #-}
@@ -9,19 +11,20 @@ module Main where
 
 import qualified Brick as Bk
 import qualified Brick.BChan as Bk
-import           Control.Applicative
+import           Control.Applicative ((<|>), Alternative(..))
 import           Control.Concurrent
 import           Control.Monad
 import           Data.Default
 import           Data.Semigroup
-import           Data.Vinyl (Rec(..), (<<*>>), rget, rcast, rtraverse)
+import qualified Data.Text as T
+import           Data.Vinyl
+  ( rgetf, rvalf, (<<$>>), (<<*>>), ElField(..), ElField, (:::), Rec(..)
+  , rcast, rtraverse)
+import           Data.Vinyl.Functor (Const(..))
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Graphics.Vty as V
 import qualified Options.Applicative as O
 import qualified Turtle as Ttl
-
-import           App
-  (Attr', Attr(..), SLabel(..), ConfLabels, ParserInput(..), ParserInput', rattr)
 
 import qualified App
 import           Utils ((:.), Lift(..), Compose(..))
@@ -29,66 +32,41 @@ import           Utils ((:.), Lift(..), Compose(..))
 appMsgLimit :: Int
 appMsgLimit = 5
 
-data ConfigPathL
-
-type instance Attr' ConfigPathL = P.FilePath
-data instance SLabel ConfigPathL = SConfigPathL
--- type instance ParserInput' ConfigPathL = T.Text
-
-type CLIConfLabels = ConfigPathL ': ConfLabels
-type CLIOpts f = Rec (f :. Attr) CLIConfLabels
+type Opts = ("config" ::: P.FilePath) ': App.Config
+type CLIOpts f = Rec (f :. ElField) Opts
 
 cliOptsParser
   :: forall f. Alternative f => O.Parser (CLIOpts f)
 cliOptsParser =
   rtraverse getCompose $
-       pack3 (pure . Attr <$> Ttl.optPath "config" 'c' "Configuration path"
-              <|> pure empty)
-    :& parse <<*>> App.configParser
+    parseMapper <<$>> App.configLabels <<*>>
+    ( Lift (Compose . pure . Field . P.fromText . T.pack . getConst)
+      :& App.configParser
+    )
   where
     pack3 = Compose . fmap Compose
-    up
-      :: ((ParserInput' a -> O.ReadM (Attr a))-> O.Parser (Attr a))
+    parseMapper
+      :: Const String x  -- label name
       -> Lift (->)
-         (Lift (->) ParserInput (O.ReadM :. Attr))
-         (O.Parser :. f :. Attr) a
-    up opt = Lift $ \(Lift parser) -> pack3 $
-      -- fall back to 'empty' if option not specified
-      pure <$> opt (getCompose . parser . ParserInput) <|> pure empty
-    parse
-      :: Alternative f
-      => Rec (Lift (->)
-              (Lift (->) ParserInput (O.ReadM :. Attr))
-              -- ^ parser function
-              (O.Parser :. f :. Attr))
-              -- ^ return the option parser, f is used to store empty value when
-              -- flag unspecified (all flags are optional)
-              ConfLabels
-    parse =
-         up (\f -> O.option (O.str >>= f)
-              (O.long "sync-state-storage" <> O.short 'S'))
-      :& up (\f -> O.option (O.str >>= f)
-              (O.long "github-host" <> O.short 'G'))
-      :& up (\f -> O.option (O.str >>= f)
-              (O.long "github-token" <> O.short 'T'))
-      :& up (\f -> O.option (O.str >>= f)
-              (O.long "sync-dir" <> O.short 'D'))
-      :& up (\f -> O.option (O.auto >>= f)
-              (O.long "sync-interval" <> O.short 'i'))
-      :& up (\f -> O.option (O.str >>= f)
-              (O.long "sync-strategy"))
-      :& up (\f -> O.option (O.str >>= f)
-              (O.long "run-mode" <> O.short 'm'))
-      :& RNil
+           (App.FieldParser O.ReadM)
+           -- ^ parser function
+           (O.Parser :. f :. ElField)
+           -- ^ return the option parser, f is used to store empty value when
+           -- flag unspecified (all flags are optional)
+           x
+    parseMapper clabel = Lift $ \parser -> pack3 $
+          pure <$> O.option (O.str >>= App.runFieldParser parser) (O.long label)
+      <|> pure empty
+      where label = getConst clabel
 
 runApp :: IO ()
 runApp =  do
   opts <- Ttl.options "The Gist synchronization client" cliOptsParser
   confFromFile <- either (return . const def)
-     (\(Attr f) ->
+     (\(Field f) ->
         either (error . (("Cannot load config file "++show f++": ")++) . show) id
         <$> App.appConfigFromYaml f)
-     (getCompose $ rget SConfigPathL opts)
+     (getCompose $ rgetf #config opts)
   conf <- either (fail . ("Config error: "++)) return
         . rtraverse getCompose $ rcast opts
                               <> confFromFile
@@ -106,9 +84,9 @@ runApp =  do
 
   -- workers
   _ <- forkIO $ App.runStateBackupWorker
-       (rattr SSyncStateStorageL conf) sStateChan appMsgChan
+       (rvalf #sync_state_storage conf) sStateChan appMsgChan
   _ <- forkIO $ App.runSyncWorker
-       (rattr SSyncIntervalL conf) appMsgChan syncEnv syncState0
+       (rvalf #sync_interval conf) appMsgChan syncEnv syncState0
 
   void $ Bk.customMain (V.mkVty V.defaultConfig) (Just appMsgChan) App.app appState
 

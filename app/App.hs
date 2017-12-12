@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -36,6 +37,7 @@ import qualified Data.Serialize as Ser
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
 import qualified Data.Time.Format as Time
+import           Data.Vinyl (rvalf)
 import qualified Data.Yaml as Y
 import qualified Debug.Trace as Trace
 import qualified Filesystem.Path.CurrentOS as P
@@ -128,12 +130,12 @@ initStates sStateChan conf = do
   let syncEnv = SS.SyncEnv
         { statePushChan = sStateChan
         , manager = mgr
-        , githubHost = rattr SGitHubHostL conf
-        , githubToken = rattr SGitHubTokenL conf
+        , githubHost = rvalf #github_host conf
+        , githubToken = rvalf #github_token conf
         , syncDir = syncDir
         , syncPathMapper = defaultSyncPathMapper syncDir
         }
-        where syncDir = rattr SSyncDirL conf
+        where syncDir = rvalf #sync_dir conf
   syncState0 <- decodeState `catch` \(e :: SomeException) -> do
     hPutStrLn stderr $
       "Unable to load sync state, err: " ++ show e
@@ -143,7 +145,7 @@ initStates sStateChan conf = do
   return ((syncEnv, syncState0), appState)
   where
     decodeState = do
-      bs <- B.readFile (P.encodeString $ rattr SSyncStateStorageL conf)
+      bs <- B.readFile (P.encodeString $ rvalf #sync_state_storage conf)
       either fail return (Ser.decode bs)
     appState = AppState
       { appConfig = conf
@@ -197,7 +199,7 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
   | otherwise = applyWaitPerform sortedPlans msgMVar actions st
   where
     sortedPlans = sort plans
-    plans' = SStrat.applyStrategyToList (valueOf $ rattr SSyncStrategyL appConfig) sortedPlans
+    plans' = SStrat.applyStrategyToList (valueOf $ rvalf #sync_strategy appConfig) sortedPlans
     actions = rights plans'
     conflictsMay = uncons $ lefts plans'
 
@@ -242,6 +244,7 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
         flip applyMsg st' . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
   | otherwise = return st -- no more messages!
 
+-- FIXME: conflict resolvement dialog box doesn't seem to be working
 -- this typically involves looking at the working area and do things as needed
 handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
 -- global events are handled first

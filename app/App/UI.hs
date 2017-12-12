@@ -1,5 +1,9 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedLabels #-}
 module App.UI
   (
     getAttrMap
@@ -18,10 +22,13 @@ import           Data.List
 import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Sequence as Seq
+import           Data.Text (Text)
 import qualified Data.Text as T
 import           Data.Time.Clock
 import           Data.Time.Format
+import           Data.Vinyl (rvalf, Label, HasValue)
 import qualified Filesystem.Path.CurrentOS as P
+import           GHC.TypeLits (symbolVal, KnownSymbol)
 import qualified Graphics.Vty as V
 import qualified Network.GitHub.Gist.Sync as S
 import qualified Network.GitHub.Types.Gist as G
@@ -57,37 +64,39 @@ drawUI AppState{..} = maybeToList dialogMay ++ [mainLayer]
       <=>
       borderWithLabel (txt "Status") status
 
-drawKV :: T.Text -> T.Text -> Widget n
+drawKV :: Text -> Text -> Widget n
 drawKV k v = padLeftRight textPad $ txt (k <> ": " <> v)
 
-pShowT :: P.FilePath -> T.Text
+pShowT :: P.FilePath -> Text
 pShowT = either id id . P.toText
 
-showT :: Show a => a -> T.Text
+showT :: Show a => a -> Text
 showT = T.pack . show
 
-fidShowT :: G.FileId -> T.Text
+fidShowT :: G.FileId -> Text
 fidShowT fileId = "[" <> fileId <> "]"
 
-gfidShowT :: S.GistFileId -> T.Text
+gfidShowT :: S.GistFileId -> Text
 gfidShowT = fidShowT . snd
 
-timeShowT :: String -> UTCTime -> T.Text
+timeShowT :: String -> UTCTime -> Text
 timeShowT format = T.pack . formatTime defaultTimeLocale format
 
 drawConfig :: AppConfig -> Widget n
 drawConfig conf =
-  (hCenter (drawKV "sync-dir"
-            (pShowT $ rattr SSyncDirL conf)) <+>
-   hCenter (drawKV "sync-state-storage"
-            (pShowT $ rattr SSyncStateStorageL conf)))
+  (hCenter (drawF #sync_dir pShowT) <+>
+   hCenter (drawF #sync_state_storage pShowT))
   <=>
   hBorder
   <=>
-  (hCenter (drawKV "sync-strategy"
-            (nameOf $ rattr SSyncStrategyL conf)) <+>
-   hCenter (drawKV "sync-interval"
-            (showT $ rattr SSyncIntervalL conf)))
+  (hCenter (drawF #sync_strategy nameOf) <+>
+   hCenter (drawF #sync_interval showT))
+  where
+    drawF
+      :: (KnownSymbol l, HasValue l Config v i)
+      => Label l -> (v -> Text) -> Widget n
+    drawF l toT = drawKV (T.pack . configLabelShow $ symbolVal l)
+                  (toT $ rvalf l conf)
 
 drawActionHistory
   :: Int
@@ -150,7 +159,7 @@ drawPlans _ plans = drawConflicts emptyWidget conflicts <=> drawActions emptyWid
   where conflicts = lefts plans
         actions = rights plans
 
-drawComparisonPanes :: (T.Text, Widget n) -> (T.Text, Widget n) -> Widget n
+drawComparisonPanes :: (Text, Widget n) -> (Text, Widget n) -> Widget n
 drawComparisonPanes (upLabel, up) (downLabel, down) =
   borderWithLabel (txt upLabel) (center up)
   <=>
