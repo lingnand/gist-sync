@@ -14,7 +14,7 @@ import           App.Types
 import           Brick
 import           Brick.Widgets.Border
 import           Brick.Widgets.Center
-import           Brick.Widgets.Dialog
+import qualified Brick.Widgets.Dialog as D
 import           Data.Bits ((.|.))
 import           Data.Either
 import           Data.Foldable (toList)
@@ -49,6 +49,9 @@ getAttrMap _ = attrMap V.defAttr
   , (logLabelAttr, V.defAttr `V.withStyle` V.bold)
   , (logLabelErrorAttr, fg V.red)
   , (logLabelWarnAttr, fg V.yellow)
+  , (D.dialogAttr, V.white `on` V.blue)
+  , (D.buttonAttr, V.black `on` V.white)
+  , (D.buttonSelectedAttr, bg V.yellow)
   ]
 
 drawUI :: AppState -> [Widget Name]
@@ -170,7 +173,7 @@ drawComparisonPanes (upLabel, up) (downLabel, down) =
 -- | draw working area as (Maybe a top layer, status layer)
 drawWorkingArea :: AppWorkingArea -> (Maybe (Widget n), Widget n)
 drawWorkingArea AreaSyncPlansResolveConflict{..}
-  = (Just (renderDialog areaStrategyChoice dialogBody), wStatus)
+  = (Just (D.renderDialog areaStrategyChoice dialogBody), wStatus)
   where
     wCurrConflict = withAttr selectionAttr $ drawConflicts emptyWidget [areaCurrentConflict]
     others = drawConflicts emptyWidget areaPendingConflicts
@@ -201,7 +204,7 @@ drawWorkingArea AreaSyncActionsPerformed{..}
       ("Original", drawPlans (txt "No Plans") areaOriginalPlans)
       ("Actions", drawActions (txt "No Actions") areaPerformedActions)
 drawWorkingArea AreaAlertMsg{..}
-  = (Just (renderDialog (dialog (Just "Alert") Nothing 80) dialogBody), wStatus)
+  = (Just (D.renderDialog (D.dialog (Just "Alert") Nothing 80) dialogBody), wStatus)
   where
     wStatus = hCenter $ txt "Alert message popped"
     dialogBody = hCenter . padAll textPad $ drawLog areaAlertMsg
