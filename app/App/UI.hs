@@ -136,8 +136,10 @@ drawActions _ as = hBox . map vBox . transpose . map widgetR $ as
   where
     r S.UpdateLocal{..}  = [pShowT localFilePath     , "<-", gfidShowT remoteGistFileId]
     r S.CreateLocal{..}  = [pShowT localFilePath<>"*", "<-", gfidShowT remoteGistFileId]
+    r S.DeleteLocal{..}  = [pShowT localFilePath<>"X", "<-", fidShowT remoteFileId]
     r S.UpdateRemote{..} = [pShowT localFilePath     , "->", gfidShowT remoteGistFileId]
     r S.CreateRemote{..} = [pShowT localFilePath     , "->", fidShowT remoteFileId<>"*"]
+    r S.DeleteRemote{..} = [pShowT localFilePath     , "->", gfidShowT remoteGistFileId<>"X"]
     widgetR = map (padLeftRight textPad . txt) . r
 
 drawConflicts :: Widget n -> [SS.SyncConflict'] -> Widget n

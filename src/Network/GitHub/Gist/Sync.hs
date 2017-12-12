@@ -4,7 +4,8 @@
 -- | A module to facilitate the syncing of Gist files
 module Network.GitHub.Gist.Sync
   ( SyncFile(..)
-  , LocalFileInfo(..)
+  , LocalFileExist(..)
+  , LocalFileInfo
   , SyncAction(..)
   , SyncPlan
   , SyncConflict(..)
@@ -41,10 +42,15 @@ data SyncFile a = SyncFile
   , syncFileTime   :: UTCTime    -- ^ The time of the sync
   } deriving (Show, Eq)
 
-data LocalFileInfo a = LocalFileInfo
-  { localFileHash         :: H.Digest a -- ^ Hash of the file as of a moment in time
-  , localFileLastModified :: UTCTime    -- ^ Last modified time of the file
+data LocalFileExist a = LocalFileExist
+  { localFileHash         :: H.Digest a
+    -- ^ Hash of the file as of a moment in time
+  , localFileLastModified :: UTCTime
+    -- ^ Last modified time of the file
   } deriving (Show, Eq, Ord)
+
+-- | Just LocalFileExist for existing info, or Nothing if file disappeared
+type LocalFileInfo a = Maybe (LocalFileExist a)
 
 type SyncPlan a = Either (SyncConflict a) (SyncAction a)
 
@@ -59,19 +65,25 @@ data SyncAction a = UpdateLocal  { localFilePath    :: P.FilePath
                                  , remoteGistFileId :: GistFileId
                                  , remoteFileURL    :: T.Text
                                  }
+                  | DeleteLocal  { localFilePath    :: P.FilePath
+                                 , remoteFileId     :: Gist.FileId
+                                 }
                   | UpdateRemote { localFilePath    :: P.FilePath
-                                 , localFileInfo    :: LocalFileInfo a
+                                 , localFileInfo    :: LocalFileExist a
                                  , remoteGistFileId :: GistFileId
                                  }
                   | CreateRemote { localFilePath    :: P.FilePath
-                                 , localFileInfo    :: LocalFileInfo a
+                                 , localFileInfo    :: LocalFileExist a
                                  , remoteFileId     :: Gist.FileId
+                                 }
+                  | DeleteRemote { localFilePath    :: P.FilePath
+                                 , remoteGistFileId :: GistFileId
                                  }
                   deriving (Show, Eq, Ord)
 
 data SyncConflict a = SyncConflict
   { conflictLocalFilePath    :: P.FilePath
-  , conflictLocalFileInfo    :: LocalFileInfo a
+  , conflictLocalFileInfo    :: LocalFileExist a
   , conflictRemoteGistFileId :: GistFileId
   , conflictRemoteFileURL    :: T.Text
   , conflictRemoteUpdateTime :: UTCTime
@@ -135,18 +147,27 @@ computeSyncActions pMapper files gists = mapMaybe (uncurry onPair) (Map.toList p
       , remoteFileURL = Gist.fileRawUrl gfile
       , remoteGistFileId = (Gist.id gist, fid)
       }
-    onPair (p,fid) (Just (Left _, local), Nothing)
-    -- never synced to remote in the past
+    onPair (p,fid) (Just (Left _, linfo), Nothing)
+      -- never synced to remote in the past
+      | Just local <- linfo
       = Just . Right . Right $ CreateRemote
       { localFilePath = p
       , localFileInfo = local
       , remoteFileId = fid
       }
-    onPair (_,_) (Just (Right sync, _), Nothing)
-      -- XXX: remote deletion..?
+      | otherwise
       = Just . Left . fromString $
-        "Synced in the past, but no gist found; sync file = " ++ show sync
-    onPair (p,fid) (Just (Right sync, local), Just (gfile, gist))
+      "filepath "++show p++" not synced in the past, but no LocalFileInfo found!"
+    onPair (p,fid) (Just (Right _, local), Nothing)
+      -- remote deletion..?
+      | Just _ <- local
+      = Just . Right . Right $ DeleteLocal
+      { localFilePath = p
+      , remoteFileId = fid
+      }
+      | otherwise -- deleted in both ends..?
+      = Nothing
+    onPair (p,fid) (Just (Right sync, Just local), Just (gfile, gist))
       | remoteChanged, not localChanged = Just . Right . Right $ UpdateLocal
         { localFilePath = p
         , remoteGistFileId = gistFileId
@@ -161,7 +182,12 @@ computeSyncActions pMapper files gists = mapMaybe (uncurry onPair) (Map.toList p
       where localChanged = localFileHash local /= syncFileHash sync
             remoteChanged = Gist.updated_at gist > syncFileTime sync
             gistFileId = (Gist.id gist, fid)
-    onPair (p,fid) (Just (_, local), Just (gfile, gist))
+    onPair (p,fid) (Just (Right _, Nothing), Just (_, gist))
+      = Just . Right . Right $ DeleteRemote
+      { localFilePath = p
+      , remoteGistFileId = (Gist.id gist, fid)
+      }
+    onPair (p,fid) (Just (_, Just local), Just (gfile, gist))
       -- both have changed, OR
       -- never synced, but there is a remote correspondence
       = Just . Right . Left $ SyncConflict

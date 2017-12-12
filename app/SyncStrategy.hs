@@ -25,6 +25,9 @@ module SyncStrategy
   , updateLocal
   , updateRemote
   , updateAny
+  , deleteLocal
+  , deleteRemote
+  , deleteAny
   , ignoreConflicts
 
   , oneOfFiles
@@ -139,6 +142,20 @@ updateRemote = customFilter f
 updateAny :: SyncStrategy
 updateAny = updateLocal <||> updateRemote
 
+
+deleteLocal :: SyncStrategy
+deleteLocal = customFilter f
+  where f (Right S.DeleteLocal{}) = True
+        f _ = False
+
+deleteRemote :: SyncStrategy
+deleteRemote = customFilter f
+  where f (Right S.DeleteRemote{}) = True
+        f _ = False
+
+deleteAny :: SyncStrategy
+deleteAny = deleteLocal <||> deleteRemote
+
 ignoreConflicts :: SyncStrategy
 ignoreConflicts = SyncStrategy $ mfilter isRight . pure
 
@@ -198,6 +215,9 @@ syncStrategyTable =
   , ("updateLocal", updateLocal)
   , ("updateRemote", updateRemote)
   , ("updateAny", updateAny)
+  , ("deleteLocal", deleteLocal)
+  , ("deleteRemote", deleteRemote)
+  , ("deleteAny", deleteAny)
   , ("ignoreConflicts", ignoreConflicts)
   , ("useRemoteForConflict", useRemoteForConflict)
   , ("useLocalForConflict", useLocalForConflict)

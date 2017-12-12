@@ -7,6 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE LambdaCase #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 module SyncState
@@ -64,6 +65,7 @@ type SyncFile'   = S.SyncFile H.MD5
 
 data SyncError = SyncLogicError T.Text
                | ServantError ServantError
+               | SyncActionNotImplemented SyncAction'
                | OtherException SomeException
 
 deriving instance Show SyncError
@@ -160,11 +162,15 @@ genSyncPlans = do
   let fs' = M.elems $ (Right <$> syncFs) <> M.fromList [ (f, Left f) | f <- fs ]
   infos <- forM fs' $ \f -> do
     let p = either id S.syncFilePath f
-    modT <- Ttl.modificationTime <$> Ttl.lstat p
-    h <- H.hash <$> liftIO (B.readFile $ P.encodeString p)
-    return S.LocalFileInfo{ S.localFileHash=h
-                          , S.localFileLastModified=posixSecondsToUTCTime modT
-                          }
+    Ttl.testfile p >>= \case
+      False -> return Nothing
+      True -> do
+        modT <- Ttl.modificationTime <$> Ttl.lstat p
+        h <- H.hash <$> liftIO (B.readFile $ P.encodeString p)
+        return $ Just S.LocalFileExist
+          { S.localFileHash=h
+          , S.localFileLastModified=posixSecondsToUTCTime modT
+          }
   let fsWithInfos = zip fs' infos
   gists <- liftGitHub $ G.gists Nothing
   let actionEths = S.computeSyncActions (syncPathMapper env) fsWithInfos gists
@@ -192,6 +198,10 @@ performSyncActions time acts = do
       upload localFilePath localFileInfo $ \content -> do
         g <- G.createGist $ GC.createFile remoteFileId mempty{ GC.content = content }
         return (G.id g, remoteFileId)
+    handle act@S.DeleteLocal{} =
+      throwError $ SyncActionNotImplemented act
+    handle act@S.DeleteRemote{} =
+      throwError $ SyncActionNotImplemented act
     write :: P.FilePath -> T.Text -> S.GistFileId -> SyncM SyncFile'
     write f url gfid = do
       mgr <- asks manager
@@ -208,10 +218,10 @@ performSyncActions time acts = do
           }
     upload
       :: P.FilePath
-      -> S.LocalFileInfo H.MD5
+      -> S.LocalFileExist H.MD5
       -> (T.Text -> G.GitHub S.GistFileId)
       -> SyncM SyncFile'
-    upload f S.LocalFileInfo{S.localFileHash} api = do
+    upload f S.LocalFileExist{S.localFileHash} api = do
       -- XXX: avoid reading file repeatedly?
       newContent <- liftIO . T.readFile $ P.encodeString f
       gfid <- liftGitHub $ api newContent
