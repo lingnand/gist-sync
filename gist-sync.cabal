@@ -74,6 +74,7 @@ executable gist-sync
                      , data-default
                      , newtype
                      , semigroups
+                     , exceptions
   default-language:    Haskell2010
 
   ghc-options:         -Wall -threaded -stubdir cbits -fdefer-typed-holes

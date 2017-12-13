@@ -24,9 +24,9 @@ import qualified Brick.BChan as Bk
 import qualified Brick.Widgets.Dialog as Bk
 import           Control.Applicative
 import           Control.Concurrent
-import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Except
+import           Control.Monad.Catch
+import           Control.Monad.Trans
 import qualified Data.ByteString as B
 import           Data.Either
 import           Data.List
@@ -79,19 +79,18 @@ runSyncWorker
   -> SS.SyncState
   -> IO ()
 runSyncWorker interval msgChan syncEnv syncState0 = do
-  result <- SS.runSyncM runM syncEnv syncState0
-  case result of
-    Left err -> Bk.writeBChan msgChan $ MsgSyncWorkerDied err
-    Right (_, finalState) -> do
-      Bk.writeBChan msgChan . MsgSyncWorkerDied . SS.OtherException . SomeException $
-        userError "Impossible error: worker finished with final state!"
-      -- backup just in case
-      writeChan (SS.statePushChan syncEnv) finalState
+  (_, finalState) <- SS.runSyncM runM syncEnv syncState0
+  Bk.writeBChan msgChan . MsgSyncWorkerDied . SomeException $
+    userError "Impossible error: worker finished with final state!"
+  -- backup just in case
+  writeChan (SS.statePushChan syncEnv) finalState
   where
     runM = forever $
       -- catch error in each run, note this doesn't prevent from IOException
       -- terminating the thread
-      oneRun `catchError` \e ->
+      oneRun `catch` \e ->
+        -- TODO: catch only some exceptions and continue on.
+        -- For others, we should die here and deliver a blocking message
         liftIO . Bk.writeBChan msgChan $ MsgSyncWorkerError e
         -- ignoring it and continue...
       where
@@ -239,7 +238,7 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
         -- ignoring this message for the moment
         return st'
       MsgSyncWorkerError err ->
-        flip applyMsg st' . LogMsg Error $ "SyncWorker: " <> T.pack (show err)
+        flip applyMsg st' . LogMsg Warn $ "SyncWorker: " <> T.pack (show err)
       MsgSyncWorkerDied err ->
         flip applyMsg st' . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
   | otherwise = return st -- no more messages!

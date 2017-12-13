@@ -28,14 +28,12 @@ module SyncState
   ) where
 
 import           Control.Concurrent.Chan
-import           Control.Exception
 import qualified Control.Foldl as Fold
 import           Control.Monad
-import           Control.Monad.Except
+import           Control.Monad.Catch
 import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Crypto.Hash as H
-import           Data.Bifunctor (first)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
@@ -51,8 +49,8 @@ import qualified Filesystem.Path.CurrentOS as P
 import           GHC.Generics
 import qualified Network.GitHub as G
 import qualified Network.GitHub.Gist.Sync as S
-import qualified Network.GitHub.Types.Gist.Edit as GE
 import qualified Network.GitHub.Types.Gist.Create as GC
+import qualified Network.GitHub.Types.Gist.Edit as GE
 import qualified Network.HTTP.Client as HTTP
 import           Servant.Client (ServantError, BaseUrl, runClientM, ClientEnv(..))
 import qualified Turtle as Ttl
@@ -67,25 +65,25 @@ data SyncError = SyncLogicError T.Text
                | ServantError ServantError
                | SyncActionNotImplemented SyncAction'
                | OtherException SomeException
+               deriving Show
 
-deriving instance Show SyncError
+instance Exception SyncError
 
 newtype SyncM a = SyncM
-  { unSyncM :: ReaderT SyncEnv (StateT SyncState (ExceptT SyncError G.GitHub)) a }
+  { unSyncM :: ReaderT SyncEnv (StateT SyncState G.GitHub) a }
   deriving ( Functor, Applicative, Monad, MonadIO
-           , MonadReader SyncEnv,  MonadError SyncError )
+           , MonadReader SyncEnv
+           , MonadThrow, MonadCatch )
 
 runSyncM
   :: SyncM a
   -> SyncEnv
   -> SyncState
-  -> IO (Either SyncError (a, SyncState))
-runSyncM m env@SyncEnv{githubToken=token, manager=mgr, githubHost=host} state = do
-  a <- (first ServantError <$> run m) `catch` (return . Left . OtherException)
-  return $ join a
+  -> IO (a, SyncState)
+runSyncM m env@SyncEnv{githubToken=token, manager=mgr, githubHost=host} state =
+  run m >>= either (throwM . ServantError) return
   where run = flip runClientM (ClientEnv mgr host)
             . flip G.runGitHub' (Just token)
-            . runExceptT
             . flip runStateT state
             . flip runReaderT env
             . unSyncM
@@ -144,7 +142,7 @@ instance MonadState SyncState SyncM where
     SyncM $ put v
 
 liftGitHub :: G.GitHub a -> SyncM a
-liftGitHub = SyncM . lift . lift . lift
+liftGitHub = SyncM . lift . lift
 
 -- | Perform a sync step and spit out a list of actions User should apply
 --   discretion and filter/transform the plans as needed before actually
@@ -174,7 +172,7 @@ genSyncPlans = do
   let fsWithInfos = zip fs' infos
   gists <- liftGitHub $ G.gists Nothing
   let actionEths = S.computeSyncActions (syncPathMapper env) fsWithInfos gists
-  forM actionEths $ either (throwError . SyncLogicError) pure
+  forM actionEths $ either (throwM . SyncLogicError) pure
 
 -- | Actually perform the actions, updating the internal sync state
 --   as a result
@@ -199,9 +197,9 @@ performSyncActions time acts = do
         g <- G.createGist $ GC.createFile remoteFileId mempty{ GC.content = content }
         return (G.id g, remoteFileId)
     handle act@S.DeleteLocal{} =
-      throwError $ SyncActionNotImplemented act
+      throwM $ SyncActionNotImplemented act
     handle act@S.DeleteRemote{} =
-      throwError $ SyncActionNotImplemented act
+      throwM $ SyncActionNotImplemented act
     write :: P.FilePath -> T.Text -> S.GistFileId -> SyncM SyncFile'
     write f url gfid = do
       mgr <- asks manager

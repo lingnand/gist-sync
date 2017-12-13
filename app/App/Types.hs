@@ -14,6 +14,7 @@ module App.Types
 
 import qualified Brick.Widgets.Dialog as Bk
 import           Control.Concurrent
+import           Control.Monad.Catch (SomeException)
 import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
@@ -21,7 +22,7 @@ import qualified Data.Time.Clock as Time
 import qualified SyncState as SS
 import qualified SyncStrategy as SStrat
 
-import App.Types.Config
+import           App.Types.Config
 
 -- | the UI state
 type Timestamped a = (Time.UTCTime, a)
@@ -31,9 +32,9 @@ data AppState = AppState
     appConfig :: AppConfig
   -- ^ needed for rendering, but should never change during app run
   , appActionHistory :: Seq.Seq (Timestamped SS.SyncAction')
-
   , appLogs :: Seq.Seq (Timestamped LogMsg)
-  -- ^ currently a bounded queue in memory, but can dump to somewhere if needed
+  -- ^ these are currently queues in memory
+  -- TODO: make the queues bounded in some ways
   , appMsgQueue :: Seq.Seq AppMsg
   -- ^ accumulated msgs while we are dealing with something else
   , appWorkingArea :: AppWorkingArea
@@ -99,8 +100,8 @@ data AppMsg = MsgSyncPlansPending
               { msgNewSyncState :: SS.SyncState
               }
             | MsgSyncWorkerError
-              { msgSyncWorkerError :: SS.SyncError
+              { msgSyncWorkerError :: SomeException
               }
             | MsgSyncWorkerDied
-              { msgSyncWorkerError :: SS.SyncError
+              { msgSyncWorkerError :: SomeException
               }

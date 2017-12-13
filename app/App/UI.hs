@@ -114,6 +114,7 @@ drawLog (LogMsg lvl text) =
         lAttr Warn = logLabelWarnAttr
         lAttr _ = logLabelAttr
 
+-- TODO: make more important messages 'stick'
 drawLogs
   :: Int
   -> Seq.Seq (Timestamped LogMsg)
