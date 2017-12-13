@@ -92,6 +92,10 @@ configLabels = rpure (Lift (U.over' configLabelShow)) <<*>> rlabels
 
 type FieldParser f = Lift (->) (Const String) (f :. ElField)
 
+mkFieldParser
+  :: (String -> f (ElField x)) -> FieldParser f x
+mkFieldParser parser = Lift $ Compose . parser . getConst
+
 runFieldParser
   :: FieldParser f x -> String -> f (ElField x)
 runFieldParser parser inp = getCompose wrapped
@@ -101,18 +105,17 @@ configParser
   :: forall f. MonadFail f
   => Rec (FieldParser f) Config
 configParser =
-     up (pure . (#sync_state_storage =:) . P.fromText . T.pack)
-  :& up (liftEth . fmap (#github_host =:) . Servant.parseBaseUrl)
-  :& up (pure . (#github_token =:) . fromString)
-  :& up (pure . (#sync_dir =:) . P.fromText . T.pack)
-  :& up (liftEth . fmap ((#sync_interval =:) . realToFrac @Double) . readEither)
-  :& up (\str -> liftEth $
-          (#sync_strategy =:) . Named (T.pack str)
-          <$> SStrat.parseStrategy str)
-  :& up (liftEth . fmap (#run_mode =:) . tryCases)
+     mkFieldParser (pure . (#sync_state_storage =:) . P.fromText . T.pack)
+  :& mkFieldParser (liftEth . fmap (#github_host =:) . Servant.parseBaseUrl)
+  :& mkFieldParser (pure . (#github_token =:) . fromString)
+  :& mkFieldParser (pure . (#sync_dir =:) . P.fromText . T.pack)
+  :& mkFieldParser (liftEth . fmap ((#sync_interval =:) . realToFrac @Double) . readEither)
+  :& mkFieldParser (\str -> liftEth $
+                     (#sync_strategy =:) . Named (T.pack str)
+                     <$> SStrat.parseStrategy str)
+  :& mkFieldParser (liftEth . fmap (#run_mode =:) . tryCases)
   :& RNil
   where
-    up f = Lift $ Compose . f . getConst
     tryCases [] = Left "Cannot parse empty string"
     tryCases s@(x:xs) = readEither s <|> readEither (toUpper x:xs)
     liftEth :: Show a => Either a v -> f v
@@ -133,7 +136,7 @@ instance MonadError String f => Default (PartialAppConfig f) where
 instance Alternative f => FromJSON (PartialAppConfig f) where
   parseJSON (A.Object v) = do
     -- first get all the parser input from json (allowing partial input)
-    inputs <- rtraverse (parse v) configLabels
+    inputs <- rtraverse getCompose $ jsonInputParser v <<*>> configLabels
     let applied :: Rec (Maybe :. A.Parser :. ElField) Config
         applied = U.fmapLift <<$>> configParser <<*>> inputs
         -- shift Maybe into f
@@ -145,6 +148,22 @@ instance Alternative f => FromJSON (PartialAppConfig f) where
     -- this step will catch all the parser error right here
     rtraverse eval applied
     where
-      parse :: A.Object -> Const String x -> A.Parser ((Maybe :. Const String) x)
-      parse v (Const l) = Compose . fmap Const <$> v .:? T.pack l
+      jsonInputParser
+        :: A.Object
+        -> Rec (Lift (->) (Const String) (A.Parser :. Maybe :. Const String)) Config
+      jsonInputParser v =
+           strProp -- #sync_state_storage
+        :& strProp -- #github_host
+        :& strProp -- #github_token
+        :& strProp -- #sync_dir
+        :& doubleProp -- #sync_interval
+        :& strProp -- #sync_strategy
+        :& strProp -- #run_mode
+        :& RNil
+        where
+          wrap f = Lift $ \(Const l) -> Compose $ Compose . fmap Const <$> f l
+          strProp
+            :: forall x. Lift (->) (Const String) (A.Parser :. Maybe :. Const String) x
+          strProp = wrap $ \l -> v .:? T.pack l
+          doubleProp = wrap $ \l -> fmap (show @Double) <$> (v .:? T.pack l)
   parseJSON _ = empty
