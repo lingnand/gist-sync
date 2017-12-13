@@ -44,6 +44,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import           Data.Time.Clock (UTCTime, NominalDiffTime)
+import qualified Data.Time.Clock as Time
 import           Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import qualified Filesystem.Path.CurrentOS as P
 import           GHC.Generics
@@ -191,8 +192,6 @@ performSyncActions time acts = do
         _ <- G.editGist gid $ GE.editFile fid mempty{ GE.content = Just content }
         return gfid
     handle S.CreateRemote{..} =
-      -- FIXME: once you created remote, remote timestamp is updated, so you
-      -- immediately write to local again..? what..
       upload localFilePath localFileInfo $ \content -> do
         g <- G.createGist $ GC.createFile remoteFileId mempty{ GC.content = content }
         return (G.id g, remoteFileId)
@@ -213,6 +212,7 @@ performSyncActions time acts = do
           , S.syncGistFileId = gfid
           , S.syncFileHash = H.hash (BL.toStrict content)
           , S.syncFileTime = time
+          -- ^ this would be later than the remote update time
           }
     upload
       :: P.FilePath
@@ -223,9 +223,11 @@ performSyncActions time acts = do
       -- XXX: avoid reading file repeatedly?
       newContent <- liftIO . T.readFile $ P.encodeString f
       gfid <- liftGitHub $ api newContent
+      -- get a new timestamp that's later than the remote update time
+      newTime <- liftIO Time.getCurrentTime
       return S.SyncFile
         { S.syncFilePath = f
         , S.syncGistFileId = gfid
         , S.syncFileHash = localFileHash
-        , S.syncFileTime = time
+        , S.syncFileTime = newTime
         }

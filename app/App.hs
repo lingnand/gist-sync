@@ -243,7 +243,6 @@ processMsgQueue st@AppState{appWorkingArea, appMsgQueue, appActionHistory}
         flip applyMsg st' . LogMsg Error $ "SyncWorker died! " <> T.pack (show err)
   | otherwise = return st -- no more messages!
 
--- FIXME: conflict resolvement dialog box doesn't seem to be working
 -- this typically involves looking at the working area and do things as needed
 handleVtyEvent :: AppState -> V.Event -> Bk.EventM Name (Bk.Next AppState)
 -- global events are handled first
