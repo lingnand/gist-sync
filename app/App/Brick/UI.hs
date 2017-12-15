@@ -4,13 +4,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedLabels #-}
-module App.UI
+module App.Brick.UI
   (
     getAttrMap
   , drawUI
   ) where
 
-import           App.Types
 import           Brick
 import           Brick.Widgets.Border
 import           Brick.Widgets.Center
@@ -32,6 +31,8 @@ import           GHC.TypeLits (symbolVal, KnownSymbol)
 import qualified Graphics.Vty as V
 import qualified Network.GitHub.Gist.Sync as S
 import qualified Network.GitHub.Types.Gist as G
+
+import           App.Brick.Types
 import qualified SyncState as SS
 
 textPad :: Int

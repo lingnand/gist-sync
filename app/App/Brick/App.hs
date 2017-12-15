@@ -7,50 +7,37 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 -- | Module used for parsing options
-module App
+module App.Brick.App
   ( app
-
-  , appConfigFromYaml
-  , initStates
-
-  , runSyncWorker
-  , runStateBackupWorker
-
-  , module App.Types
+  , runApp
   ) where
 
 import qualified Brick as Bk
 import qualified Brick.BChan as Bk
 import qualified Brick.Widgets.Dialog as Bk
-import           Control.Applicative
 import           Control.Concurrent
-import           Control.Monad
-import           Control.Monad.Catch
+import           Control.Monad (void)
 import           Control.Monad.Trans
-import qualified Data.ByteString as B
 import           Data.Either
 import           Data.List
 import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Sequence as Seq
-import qualified Data.Serialize as Ser
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
 import qualified Data.Time.Format as Time
 import           Data.Vinyl (rvalf)
-import qualified Data.Yaml as Y
 import qualified Debug.Trace as Trace
-import qualified Filesystem.Path.CurrentOS as P
 import qualified Graphics.Vty as V
-import qualified Network.GitHub.Gist.Sync as S
-import qualified Network.HTTP.Client as HTTP
-import qualified Network.HTTP.Client.TLS as HTTP
 import qualified SyncState as SS
-import           System.IO
 
-import           App.Types
-import           App.UI (drawUI, getAttrMap)
+import           App.Brick.Types
+import           App.Brick.UI (drawUI, getAttrMap)
+import qualified App.Core as Core
 import qualified SyncStrategy as SStrat
+
+appMsgLimit :: Int
+appMsgLimit = 5
 
 app :: Bk.App AppState AppMsg Name
 app = Bk.App
@@ -61,106 +48,26 @@ app = Bk.App
   , appAttrMap = getAttrMap
   }
 
-runStateBackupWorker
-  :: P.FilePath
-  -> Chan SS.SyncState
-  -> Bk.BChan AppMsg
-  -> IO ()
-runStateBackupWorker outputPath stateUpdChan msgChan = forever $ do
-  st <- readChan stateUpdChan
-
-  B.writeFile (P.encodeString outputPath) (Ser.encode st)
-  Bk.writeBChan msgChan $ MsgSyncStatePersisted st
-
-runSyncWorker
-  :: Time.NominalDiffTime
-  -> Bk.BChan AppMsg
+runApp
+  :: AppConfig
   -> SS.SyncEnv
   -> SS.SyncState
   -> IO ()
-runSyncWorker interval msgChan syncEnv syncState0 = do
-  (_, finalState) <- SS.runSyncM runM syncEnv syncState0
-  Bk.writeBChan msgChan . MsgSyncWorkerDied . SomeException $
-    userError "Impossible error: worker finished with final state!"
-  -- backup just in case
-  writeChan (SS.statePushChan syncEnv) finalState
-  where
-    runM = forever $
-      -- catch error in each run, note this doesn't prevent from IOException
-      -- terminating the thread
-      oneRun `catch` \e ->
-        -- TODO: catch only some exceptions and continue on.
-        -- For others, we should die here and deliver a blocking message
-        liftIO . Bk.writeBChan msgChan $ MsgSyncWorkerError e
-        -- ignoring it and continue...
-      where
-        oneRun = do
-          -- immediately do a sync
-          now <- liftIO Time.getCurrentTime
-          plans <- SS.genSyncPlans
-          filteredActions <- liftIO $ do
-            respMVar <- newEmptyMVar
-            liftIO . Bk.writeBChan msgChan $ MsgSyncPlansPending plans respMVar
-            takeMVar respMVar
-          SS.performSyncActions now filteredActions
-          liftIO $ do
-            Bk.writeBChan msgChan $ MsgSyncActionsPerformed plans filteredActions
-            -- wait for said time
-            threadDelay $ ceiling (interval * 1e6)
+runApp conf syncEnv syncState0 = do
+  -- communication chans
+  appMsgChan <- Bk.newBChan appMsgLimit
+  sStateChan <- newChan
 
-defaultSyncPathMapper :: P.FilePath -> S.PathMapper
-defaultSyncPathMapper syncDir = S.pathMapper pathToId idToPath
-  where pathToId = either id id . P.toText . P.filename
-        idToPath = (syncDir P.</>) . P.fromText
+  -- bootstrap state
+  let appState = initAppState conf
 
-appConfigFromYaml
-  :: Alternative f
-  => P.FilePath -> IO (Either Y.ParseException (PartialAppConfig f))
-appConfigFromYaml = Y.decodeFileEither . P.encodeString
+  -- workers
+  _ <- forkIO $ Core.runStateBackupWorker
+       (rvalf #sync_state_storage conf) sStateChan (Bk.writeBChan appMsgChan)
+  _ <- forkIO $ Core.runSyncWorker
+       (rvalf #sync_interval conf) syncEnv syncState0 (Bk.writeBChan appMsgChan)
 
--- | init the various env/states
-initStates
-  :: Chan SS.SyncState -- state communication chan
-  -> AppConfig
-  -> IO ((SS.SyncEnv, SS.SyncState), AppState)
-initStates sStateChan conf = do
-  -- initial state
-  mgr <- HTTP.newManager HTTP.tlsManagerSettings
-  let syncEnv = SS.SyncEnv
-        { statePushChan = sStateChan
-        , manager = mgr
-        , githubHost = rvalf #github_host conf
-        , githubToken = rvalf #github_token conf
-        , syncDir = syncDir
-        , syncPathMapper = defaultSyncPathMapper syncDir
-        }
-        where syncDir = rvalf #sync_dir conf
-  syncState0 <- decodeState `catch` \(e :: SomeException) -> do
-    hPutStrLn stderr $
-      "Unable to load sync state, err: " ++ show e
-      ++ "\nFalling back to default state..."
-    return mempty
-
-  return ((syncEnv, syncState0), appState)
-  where
-    decodeState = do
-      bs <- B.readFile (P.encodeString $ rvalf #sync_state_storage conf)
-      either fail return (Ser.decode bs)
-    appState = AppState
-      { appConfig = conf
-      , appActionHistory = mempty
-      , appLogs = mempty
-      , appMsgQueue = mempty
-      , appWorkingArea = mempty
-      }
-
-defaultConflictResolveStrategies :: [(String, SStrat.SyncStrategy)]
-defaultConflictResolveStrategies =
-  [ ("useNewer" , SStrat.useNewerForConflict)
-  , ("useLocal" , SStrat.useLocalForConflict)
-  , ("useRemote", SStrat.useRemoteForConflict)
-  , ("Ignore"   , SStrat.ignoreConflicts)
-  ]
+  void $ Bk.customMain (V.mkVty V.defaultConfig) (Just appMsgChan) app appState
 
 applyWaitPerform
   :: MonadIO m
@@ -191,7 +98,7 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
           , areaPendingConflicts = more
           , areaCurrentConflict = conflictHead
           , areaStrategyChoice = Bk.dialog Nothing
-                             (Just (0, defaultConflictResolveStrategies)) 80
+                             (Just (0, Core.defaultConflictResolveStrategies)) 80
           , areaReplyMVar = msgMVar
           }
       }

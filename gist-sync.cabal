@@ -32,15 +32,6 @@ library
 
 executable gist-sync
   -- exposed-modules:     
-  other-modules:       App.Types
-                     , App.Types.Config
-                     , App.UI
-                     , App
-                     , SyncState
-                     , SyncStrategy
-                     , Utils
-                     , Utils.Functor
-                     , Utils.Newtype
   -- other-extensions:
   hs-source-dirs:      app
   main-is:             Main.hs

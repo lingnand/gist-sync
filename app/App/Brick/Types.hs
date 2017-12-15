@@ -1,4 +1,4 @@
-module App.Types
+module App.Brick.Types
   (
     AppState(..)
   , Timestamped
@@ -6,15 +6,15 @@ module App.Types
   , LogMsg(..)
   , Name
   , AppWorkingArea(..)
-  , AppMsg(..)
 
   , areaLockedToCurrentWork
-  , module App.Types.Config
+
+  , initAppState
+  , module App.Types.Core
   ) where
 
 import qualified Brick.Widgets.Dialog as Bk
 import           Control.Concurrent
-import           Control.Monad.Catch (SomeException)
 import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import qualified Data.Time.Clock as Time
@@ -22,7 +22,7 @@ import qualified Data.Time.Clock as Time
 import qualified SyncState as SS
 import qualified SyncStrategy as SStrat
 
-import           App.Types.Config
+import           App.Types.Core
 
 -- | the UI state
 type Timestamped a = (Time.UTCTime, a)
@@ -87,21 +87,13 @@ areaLockedToCurrentWork AreaSyncActionsPerformed{} = False
 areaLockedToCurrentWork AreaAlertMsg{} = True
 areaLockedToCurrentWork AreaSyncPlansResolveConflict{} = True
 
-data AppMsg = MsgSyncPlansPending
-              { msgPendingPlans :: [SS.SyncPlan']
-              , msgMVar         :: MVar [SS.SyncAction']
-              -- ^ where transformed actions are written to
-              }
-            | MsgSyncActionsPerformed
-              { msgOriginalPlans    :: [SS.SyncPlan']
-              , msgPerformedActions :: [SS.SyncAction']
-              }
-            | MsgSyncStatePersisted
-              { msgNewSyncState :: SS.SyncState
-              }
-            | MsgSyncWorkerError
-              { msgSyncWorkerError :: SomeException
-              }
-            | MsgSyncWorkerDied
-              { msgSyncWorkerError :: SomeException
-              }
+initAppState
+  :: AppConfig
+  -> AppState
+initAppState conf = AppState
+  { appConfig = conf
+  , appActionHistory = mempty
+  , appLogs = mempty
+  , appMsgQueue = mempty
+  , appWorkingArea = mempty
+  }
