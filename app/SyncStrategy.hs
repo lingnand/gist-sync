@@ -104,6 +104,7 @@ localOnly :: SyncStrategy
 localOnly = customFilter f
   where f (Right S.UpdateLocal{}) = True
         f (Right S.CreateLocal{}) = True
+        f (Right S.DeleteLocal{}) = True
         -- XXX: should we auto override local change to match remote?
         f (Left S.SyncConflict{}) = True
         f _ = False
@@ -112,6 +113,7 @@ remoteOnly :: SyncStrategy
 remoteOnly = customFilter f
   where f (Right S.UpdateRemote{}) = True
         f (Right S.CreateRemote{}) = True
+        f (Right S.DeleteRemote{}) = True
         -- XXX: should we auto override remote change to match local?
         f (Left S.SyncConflict{}) = True
         f _ = False
