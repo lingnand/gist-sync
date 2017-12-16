@@ -7,7 +7,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 -- | Module used for parsing options
-module App.Brick.App
+module App.Brick
   ( app
   , runApp
   ) where
@@ -54,16 +54,15 @@ runApp
   -> SS.SyncState
   -> IO ()
 runApp conf syncEnv syncState0 = do
-  -- communication chans
   appMsgChan <- Bk.newBChan appMsgLimit
-  sStateChan <- newChan
 
   -- bootstrap state
   let appState = initAppState conf
 
   -- workers
   _ <- forkIO $ Core.runStateBackupWorker
-       (rvalf #sync_state_storage conf) sStateChan (Bk.writeBChan appMsgChan)
+       (rvalf #sync_state_storage conf) (SS.statePushChan syncEnv)
+       (Bk.writeBChan appMsgChan)
   _ <- forkIO $ Core.runSyncWorker
        (rvalf #sync_interval conf) syncEnv syncState0 (Bk.writeBChan appMsgChan)
 
@@ -98,12 +97,13 @@ applySyncPlans plans msgMVar st@AppState{appConfig}
           , areaPendingConflicts = more
           , areaCurrentConflict = conflictHead
           , areaStrategyChoice = Bk.dialog Nothing
-                             (Just (0, Core.defaultConflictResolveStrategies)) 80
+            (Just (0, toChoice <$> Core.defaultConflictResolveStrategies)) 80
           , areaReplyMVar = msgMVar
           }
       }
   | otherwise = applyWaitPerform sortedPlans msgMVar actions st
   where
+    toChoice (_, named) = (T.unpack $ nameOf named, valueOf named)
     sortedPlans = sort plans
     plans' = SStrat.applyStrategyToList (valueOf $ rvalf #sync_strategy appConfig) sortedPlans
     actions = rights plans'

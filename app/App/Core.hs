@@ -36,6 +36,12 @@ import           System.IO
 import           App.Types.Core
 import qualified SyncStrategy as SStrat
 
+
+-- NOTE: the msgSender handler needs to be fast and non-blocking, otherwise we
+-- can run into trouble
+-- might as well use a channel on the api? (and then create a forwarder in Brick
+-- to forward msgs into BChan)
+
 runStateBackupWorker
   :: P.FilePath
   -> Chan SS.SyncState
@@ -43,7 +49,6 @@ runStateBackupWorker
   -> IO ()
 runStateBackupWorker outputPath stateUpdChan msgSender = forever $ do
   st <- readChan stateUpdChan
-
   B.writeFile (P.encodeString outputPath) (Ser.encode st)
   msgSender $ MsgSyncStatePersisted st
 
@@ -95,10 +100,11 @@ appConfigFromYaml = Y.decodeFileEither . P.encodeString
 
 -- | init the various env/states
 initSyncStates
-  :: Chan SS.SyncState -- state communication chan
-  -> AppConfig
+  :: AppConfig
   -> IO (SS.SyncEnv, SS.SyncState)
-initSyncStates sStateChan conf = do
+initSyncStates conf = do
+  -- state communication chan
+  sStateChan <- newChan
   -- initial state
   mgr <- HTTP.newManager HTTP.tlsManagerSettings
   let syncEnv = SS.SyncEnv
@@ -122,10 +128,11 @@ initSyncStates sStateChan conf = do
       bs <- B.readFile (P.encodeString $ rvalf #sync_state_storage conf)
       either fail return (Ser.decode bs)
 
-defaultConflictResolveStrategies :: [(String, SStrat.SyncStrategy)]
+-- Label to strats
+defaultConflictResolveStrategies :: [(Char, Named SStrat.SyncStrategy)]
 defaultConflictResolveStrategies =
-  [ ("useNewer" , SStrat.useNewerForConflict)
-  , ("useLocal" , SStrat.useLocalForConflict)
-  , ("useRemote", SStrat.useRemoteForConflict)
-  , ("Ignore"   , SStrat.ignoreConflicts)
+  [ ('N', Named "useNewer"  SStrat.useNewerForConflict)
+  , ('L', Named "useLocal"  SStrat.useLocalForConflict)
+  , ('R', Named "useRemote" SStrat.useRemoteForConflict)
+  , ('I', Named "Ignore"    SStrat.ignoreConflicts)
   ]

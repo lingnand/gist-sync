@@ -156,6 +156,8 @@ deleteRemote = customFilter f
 deleteAny :: SyncStrategy
 deleteAny = deleteLocal <||> deleteRemote
 
+-- NOTE: ignoring conflicts is not currently doing what we want, because
+-- ignoring doesn't 'stick' for the follow up actions
 ignoreConflicts :: SyncStrategy
 ignoreConflicts = SyncStrategy $ mfilter isRight . pure
 

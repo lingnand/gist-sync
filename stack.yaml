@@ -6,6 +6,8 @@ packages:
   extra-dep: true
 - location: ../vinyl
   extra-dep: true
+- location: ../Haskell-Turtle-Library
+  extra-dep: true
 
 extra-deps:
 # - http-link-header-1.0.3

@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,6 +17,7 @@
 module App.Types.Config
   (
     RunMode(..)
+  , UI(..)
   , Named(..)
 
   , Config
@@ -28,6 +30,8 @@ module App.Types.Config
   , configLabelShow
   , configLabels
   , configParser
+  , mkFieldParser
+  , readIgnoreCase
   ) where
 
 import           Control.Applicative (Alternative(..))
@@ -56,6 +60,8 @@ import qualified Utils as U
 data RunMode = Normal | Dry
   deriving (Show, Read, Eq, Enum, Bounded)
 
+data UI = Brick | Text deriving (Show, Eq, Read, Enum, Bounded)
+
 -- wrapper that allows storing a name
 data Named a = Named
   { nameOf  :: T.Text
@@ -69,6 +75,7 @@ type Config = '[ "sync_state_storage" ::: P.FilePath
                , "sync_interval"      ::: Time.NominalDiffTime
                , "sync_strategy"      ::: Named SStrat.SyncStrategy
                , "run_mode"           ::: RunMode
+               , "ui"                 ::: UI
                ]
 
 instance Show (Named SStrat.SyncStrategy) where
@@ -113,13 +120,17 @@ configParser =
   :& mkFieldParser (\str -> liftEth $
                      (#sync_strategy =:) . Named (T.pack str)
                      <$> SStrat.parseStrategy str)
-  :& mkFieldParser (liftEth . fmap (#run_mode =:) . tryCases)
+  :& mkFieldParser (fmap (#run_mode =:) . readIgnoreCase)
+  :& mkFieldParser (fmap (#ui =:) . readIgnoreCase)
   :& RNil
   where
-    tryCases [] = Left "Cannot parse empty string"
-    tryCases s@(x:xs) = readEither s <|> readEither (toUpper x:xs)
     liftEth :: Show a => Either a v -> f v
     liftEth = either (Fail.fail . show) pure
+
+readIgnoreCase :: (Read a, MonadFail m) => String -> m a
+readIgnoreCase = either (Fail.fail . show) pure . tryCases
+  where tryCases [] = Left "Cannot parse empty string"
+        tryCases s@(x:xs) = readEither s <|> readEither (toUpper x:xs)
 
 instance MonadError String f => Default (PartialAppConfig f) where
   def =
@@ -130,6 +141,7 @@ instance MonadError String f => Default (PartialAppConfig f) where
     :& up (throwError "No sync interval specified")
     :& up (throwError "No sync strategy specified")
     :& up (pure $ #run_mode =: Normal)
+    :& up (pure $ #ui =: Text)
     :& RNil
     where up = Compose
 
@@ -159,6 +171,7 @@ instance Alternative f => FromJSON (PartialAppConfig f) where
         :& doubleProp -- #sync_interval
         :& strProp -- #sync_strategy
         :& strProp -- #run_mode
+        :& strProp -- #ui
         :& RNil
         where
           wrap f = Lift $ \(Const l) -> Compose $ Compose . fmap Const <$> f l

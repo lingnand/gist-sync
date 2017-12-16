@@ -178,6 +178,7 @@ genSyncPlans = do
 -- | Actually perform the actions, updating the internal sync state
 --   as a result
 performSyncActions :: UTCTime -> [SyncAction'] -> SyncM ()
+performSyncActions _ [] = return ()
 performSyncActions time acts = do
   newSFiles <- mapM handle acts
   modify $ \st -> st{ syncFiles = foldr (\f -> M.insert (S.syncFilePath f) f) (syncFiles st) newSFiles  }

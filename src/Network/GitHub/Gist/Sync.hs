@@ -28,8 +28,7 @@ import           Data.String
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import           Data.Time.Clock
-import qualified Filesystem.Path as P
-import           Filesystem.Path.CurrentOS ()
+import qualified Filesystem.Path.CurrentOS as P
 import qualified Network.GitHub.Types.Gist as Gist
 
 type GistFileId = (Gist.GistId, Gist.FileId)

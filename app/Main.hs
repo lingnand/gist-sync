@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -10,25 +11,28 @@
 module Main where
 
 import           Control.Applicative ((<|>), Alternative(..))
-import           Control.Concurrent
 import           Data.Default
 import           Data.Semigroup
 import qualified Data.Text as T
 import           Data.Vinyl
-  ( rgetf, (<<$>>), (<<*>>), ElField(..), ElField, (:::), Rec(..)
-  , rcast, rtraverse)
+  ((<<$>>), (<<*>>), (=:), ElField(..), (:::), Rec(..)
+  , rcast, rtraverse, rvalf, rgetf)
 import           Data.Vinyl.Functor (Const(..))
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Options.Applicative as O
 import qualified Turtle as Ttl
 
-import qualified App.Brick.App as BkApp
+#ifndef DISABLE_BRICK
+import qualified App.Brick as BkApp
+#endif
+import qualified App.Text as TextApp
 import qualified App.Core as Core
-import           App.Types.Core (Config)
+import           App.Types.Core (Config, mkFieldParser)
 import qualified App.Types.Core as Core
 import           Utils ((:.), Lift(..), Compose(..))
 
-type Opts = ("config" ::: P.FilePath) ': Config
+type Opts = ("config" ::: P.FilePath)
+         ': Config
 type CLIOpts f = Rec (f :. ElField) Opts
 
 cliOptsParser
@@ -36,8 +40,8 @@ cliOptsParser
 cliOptsParser =
   rtraverse getCompose $
     parseMapper <<$>> Core.configLabels <<*>>
-    ( Lift (Compose . pure . Field . P.fromText . T.pack . getConst)
-      :& Core.configParser
+    (  mkFieldParser (pure . (#config =:) . P.fromText . T.pack)
+    :& Core.configParser
     )
   where
     pack3 = Compose . fmap Compose
@@ -72,10 +76,18 @@ runApp =  do
   print conf
 
   -- communication chans
-  sStateChan <- newChan
-  (syncEnv, syncState0) <- Core.initSyncStates sStateChan conf
+  (syncEnv, syncState0) <- Core.initSyncStates conf
 
-  BkApp.runApp conf syncEnv syncState0
+  case rvalf #ui conf of
+    Core.Brick -> do
+#ifdef DISABLE_BRICK
+      Ttl.eprintf "Cannot use Brick as it's not available in the current setup.\n"
+      Ttl.exit $ Ttl.ExitFailure 2
+#else
+      BkApp.runApp conf syncEnv syncState0
+#endif
+    Core.Text ->
+      TextApp.runApp conf syncEnv syncState0
 
 
 main :: IO ()
