@@ -20,6 +20,7 @@ import           Data.Vinyl
 import           Data.Vinyl.Functor (Const(..))
 import qualified Filesystem.Path.CurrentOS as P
 import qualified Options.Applicative as O
+import           System.IO
 import qualified Turtle as Ttl
 
 #ifndef DISABLE_BRICK
@@ -71,6 +72,7 @@ runApp =  do
         . rtraverse getCompose $ rcast opts
                               <> confFromFile
                               <> def
+  hSetBuffering stdout LineBuffering
 
   putStrLn "== Conf =="
   print conf

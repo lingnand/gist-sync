@@ -68,7 +68,7 @@ handleMsg conf msg = case msg of
     -- ignore cases where we have no plans
       where
         selectStrat strats = do
-          fprint ("Please select "%stext%": ") choices
+          fprint ("Please select "%stext%":\n") choices
           hFlush stdout
           Ttl.readline >>= \case
             Nothing -> noresp
@@ -79,7 +79,7 @@ handleMsg conf msg = case msg of
               | otherwise -> noresp
           where toChoice (c, strat) = sformat accentuate (c,nameOf strat)
                 choices = T.intercalate "/" $ map toChoice strats
-                noresp = T.putStr "Please choose an option. " >> selectStrat strats
+                noresp = selectStrat strats
                 wrong = T.putStr "Unrecognized option. " >> selectStrat strats
         resolve' [] acc = return acc
         resolve' (c:cs) acc = do
