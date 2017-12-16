@@ -50,8 +50,6 @@ import qualified Filesystem.Path.CurrentOS as P
 import           GHC.Generics
 import qualified Network.GitHub as G
 import qualified Network.GitHub.Gist.Sync as S
-import qualified Network.GitHub.Types.Gist.Create as GC
-import qualified Network.GitHub.Types.Gist.Edit as GE
 import qualified Network.HTTP.Client as HTTP
 import           Servant.Client (ServantError, BaseUrl, runClientM, ClientEnv(..))
 import qualified Turtle as Ttl
@@ -190,12 +188,14 @@ performSyncActions time acts = do
     handle S.UpdateRemote{..} =
       upload localFilePath localFileInfo $ \content -> do
         let gfid@(gid,fid) = remoteGistFileId
-        _ <- G.editGist gid $ GE.editFile fid mempty{ GE.content = Just content }
+        _ <- G.editGist gid $ S.editFile fid
+             mempty{ S.fileEditContent = Just content }
         return gfid
     handle S.CreateRemote{..} =
       upload localFilePath localFileInfo $ \content -> do
-        g <- G.createGist $ GC.createFile remoteFileId mempty{ GC.content = content }
-        return (G.id g, remoteFileId)
+        g <- G.createGist $ S.createFile remoteFileId
+             mempty{ S.fileCreateContent = content }
+        return (S.gistId g, remoteFileId)
     handle act@S.DeleteLocal{} =
       throwM $ SyncActionNotImplemented act
     handle act@S.DeleteRemote{} =

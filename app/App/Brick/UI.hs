@@ -30,7 +30,6 @@ import qualified Filesystem.Path.CurrentOS as P
 import           GHC.TypeLits (symbolVal, KnownSymbol)
 import qualified Graphics.Vty as V
 import qualified Network.GitHub.Gist.Sync as S
-import qualified Network.GitHub.Types.Gist as G
 
 import           App.Brick.Types
 import qualified SyncState as SS
@@ -77,7 +76,7 @@ pShowT = either id id . P.toText
 showT :: Show a => a -> Text
 showT = T.pack . show
 
-fidShowT :: G.FileId -> Text
+fidShowT :: S.FileId -> Text
 fidShowT fileId = "[" <> fileId <> "]"
 
 gfidShowT :: S.GistFileId -> Text

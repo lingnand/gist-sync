@@ -29,7 +29,6 @@ import           System.IO (hFlush, stdout, stderr)
 import qualified Turtle as Ttl
 
 import qualified Network.GitHub.Gist.Sync as S
-import qualified Network.GitHub.Types.Gist as G
 
 import qualified App.Core as Core
 import           App.Types.Core
@@ -117,7 +116,7 @@ timeF format = mapf (Time.formatTime Time.defaultTimeLocale format) string
 timeIso :: Format r (UTCTime -> r)
 timeIso = timeF "%m-%dT%H:%M"
 
-fid :: Format r (G.FileId -> r)
+fid :: Format r (S.FileId -> r)
 fid = mapf (\x -> "["<>x<>"]") stext
 
 -- ignore gist id for now
