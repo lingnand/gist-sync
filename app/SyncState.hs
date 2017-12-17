@@ -159,6 +159,13 @@ genSyncPlans = do
     Ttl.testfile f >>= guard
     return f
   -- merge with the existing sync files
+  -- TODO: do not just blindly follow sync files as golden standard on which
+  -- files need to be synced, because
+  -- * user might have changed filtering rules to exclude these files to be
+  --   synced, and it's a pain to see this still showing up in pre-filtering
+  --   plans every time
+  -- * we might want to conside not just do a merge into old syncfiles on new
+  --   syncfiles, but actually do a *replacement* of old syncfiles instead
   syncFs <- gets syncFiles
   let fs' = M.elems $ (Right <$> syncFs) <> M.fromList [ (f, Left f) | f <- fs ]
   infos <- forM fs' $ \f -> do
