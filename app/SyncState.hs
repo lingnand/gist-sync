@@ -31,6 +31,7 @@ import           Control.Concurrent.Chan
 import qualified Control.Foldl as Fold
 import           Control.Monad
 import           Control.Monad.Catch
+import qualified Control.Monad.Except as Except
 import           Control.Monad.Reader
 import           Control.Monad.State
 import qualified Crypto.Hash as H
@@ -141,7 +142,10 @@ instance MonadState SyncState SyncM where
     SyncM $ put v
 
 liftGitHub :: G.GitHub a -> SyncM a
-liftGitHub = SyncM . lift . lift
+liftGitHub = SyncM . capServantErr . lift . lift
+  -- structure client call such that all errors via MonadError are
+  -- converted and thrown as Exception instead
+  where capServantErr = (`Except.catchError` throwM . ServantError)
 
 -- | Perform a sync step and spit out a list of actions User should apply
 --   discretion and filter/transform the plans as needed before actually

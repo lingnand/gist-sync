@@ -65,7 +65,7 @@ runSyncWorker interval syncEnv syncState0 msgSender = do
   -- backup just in case
   writeChan (SS.statePushChan syncEnv) finalState
   where
-    runM = forever $
+    runM = forever $ do
       -- catch error in each run, note this doesn't prevent from IOException
       -- terminating the thread
       oneRun `catch` \e ->
@@ -73,6 +73,8 @@ runSyncWorker interval syncEnv syncState0 msgSender = do
         -- For others, we should die here and deliver a blocking message
         liftIO . msgSender $ MsgSyncWorkerError e
         -- ignoring it and continue...
+      -- wait for said time
+      liftIO . threadDelay $ ceiling (interval * 1e6)
       where
         oneRun = do
           -- immediately do a sync
@@ -83,10 +85,7 @@ runSyncWorker interval syncEnv syncState0 msgSender = do
             liftIO . msgSender $ MsgSyncPlansPending plans respMVar
             takeMVar respMVar
           SS.performSyncActions now filteredActions
-          liftIO $ do
-            msgSender $ MsgSyncActionsPerformed plans filteredActions
-            -- wait for said time
-            threadDelay $ ceiling (interval * 1e6)
+          liftIO . msgSender $ MsgSyncActionsPerformed plans filteredActions
 
 defaultSyncPathMapper :: P.FilePath -> S.PathMapper
 defaultSyncPathMapper syncDir = S.pathMapper pathToId idToPath
