@@ -199,14 +199,14 @@ performSyncActions time acts = do
     handle S.UpdateRemote{..} =
       upload localFilePath localFileInfo $ \content -> do
         let gfid@(gid,fid) = remoteGistFileId
-        _ <- G.editGist gid $ S.editFile fid
+        g <- G.editGist gid $ S.editFile fid
              mempty{ S.fileEditContent = Just content }
-        return gfid
+        return (gfid, g)
     handle S.CreateRemote{..} =
       upload localFilePath localFileInfo $ \content -> do
         g <- G.createGist $ S.createFile remoteFileId
              mempty{ S.fileCreateContent = content }
-        return (S.gistId g, remoteFileId)
+        return ((S.gistId g, remoteFileId), g)
     handle act@S.DeleteLocal{} =
       throwM $ SyncActionNotImplemented act
     handle act@S.DeleteRemote{} =
@@ -229,14 +229,14 @@ performSyncActions time acts = do
     upload
       :: P.FilePath
       -> S.LocalFileExist H.MD5
-      -> (T.Text -> G.GitHub S.GistFileId)
+      -> (T.Text -> G.GitHub (S.GistFileId, G.Gist))
       -> SyncM SyncFile'
     upload f S.LocalFileExist{S.localFileHash} api = do
       -- XXX: avoid reading file repeatedly?
       newContent <- liftIO . T.readFile $ P.encodeString f
-      gfid <- liftGitHub $ api newContent
-      -- get a new timestamp that's later than the remote update time
-      newTime <- liftIO Time.getCurrentTime
+      (gfid, g) <- liftGitHub $ api newContent
+      -- use a new timestamp that's later than the remote update time
+      let newTime = Time.addUTCTime 2 $ G.gistUpdatedAt g
       return S.SyncFile
         { S.syncFilePath = f
         , S.syncGistFileId = gfid
