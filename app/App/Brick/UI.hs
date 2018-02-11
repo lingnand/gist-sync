@@ -25,7 +25,7 @@ import           Data.Text (Text)
 import qualified Data.Text as T
 import           Data.Time.Clock
 import           Data.Time.Format
-import           Data.Vinyl (rvalf, Label, HasValue)
+import           Data.Vinyl (rvalf, Label, HasField)
 import qualified Filesystem.Path.CurrentOS as P
 import           GHC.TypeLits (symbolVal, KnownSymbol)
 import qualified Graphics.Vty as V
@@ -96,7 +96,7 @@ drawConfig conf =
    hCenter (drawF #sync_interval showT))
   where
     drawF
-      :: (KnownSymbol l, HasValue l Config v i)
+      :: (KnownSymbol l, HasField l Config v)
       => Label l -> (v -> Text) -> Widget n
     drawF l toT = drawKV (T.pack . configLabelShow $ symbolVal l)
                   (toT $ rvalf l conf)

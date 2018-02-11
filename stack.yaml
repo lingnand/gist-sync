@@ -2,11 +2,17 @@ resolver: lts-9.11
 
 packages:
 - '.'
-- location: ../servant-github
+- location:
+    git: https://github.com/finlay/servant-github
+    commit: c586452918cbaaae028d4ec6f9fd8242df0c5572
   extra-dep: true
-- location: ../vinyl
+- location:
+    git: https://github.com/VinylRecords/Vinyl
+    commit: ea902e1a4581b08e64bfe8644bb06b44b79f5620
   extra-dep: true
-- location: ../Haskell-Turtle-Library
+- location:
+    git: https://github.com/Gabriel439/Haskell-Turtle-Library
+    commit: 1670f83d27de253894e30d4dac78af70ae1c14b8
   extra-dep: true
 
 extra-deps:
